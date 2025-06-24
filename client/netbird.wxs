@@ -52,6 +52,7 @@
 
 
 
+
 		<!-- Icons -->
 		<Icon Id="NetbirdIcon" SourceFile=".\client\ui\assets\netbird.ico" />
 		<Property Id="ARPPRODUCTICON" Value="NetbirdIcon" />
