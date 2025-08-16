@@ -69,7 +69,18 @@ func (c *WGUSPConfigurer) ConfigureInterface(privateKey string, port int) error 
 		ListenPort:   &port,
 	}
 
-	return c.device.IpcSet(toWgUserspaceString(config))
+	configStr := toWgUserspaceString(config)
+	log.Debugf("calling IpcSet to configure WireGuard device with config:\n%s", configStr)
+	log.Debugf("IpcSet: config string length=%d, ends with empty line=%v", len(configStr), strings.HasSuffix(configStr, "\n\n"))
+	log.Debugf("IpcSet: about to call device.IpcSet()")
+	err = c.device.IpcSet(configStr)
+	log.Debugf("IpcSet: device.IpcSet() returned, err=%v", err)
+	if err != nil {
+		log.Errorf("IpcSet failed: %v", err)
+		return err
+	}
+	log.Debugf("WireGuard device configured successfully")
+	return nil
 }
 
 func (c *WGUSPConfigurer) UpdatePeer(peerKey string, allowedIps []netip.Prefix, keepAlive time.Duration, endpoint *net.UDPAddr, preSharedKey *wgtypes.Key) error {
@@ -367,7 +378,7 @@ func toWgUserspaceString(wgCfg wgtypes.Config) string {
 		}
 
 		if p.Remove {
-			sb.WriteString("remove=true")
+			sb.WriteString("remove=true\n")
 		}
 
 		if p.ReplaceAllowedIPs {
@@ -386,6 +397,10 @@ func toWgUserspaceString(wgCfg wgtypes.Config) string {
 			sb.WriteString(fmt.Sprintf("persistent_keepalive_interval=%d\n", int(p.PersistentKeepaliveInterval.Seconds())))
 		}
 	}
+
+	// Add terminating empty line as required by IpcSetOperation protocol
+	sb.WriteString("\n")
+
 	return sb.String()
 }
 

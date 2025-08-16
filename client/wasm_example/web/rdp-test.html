@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>RDP Certificate Validation Test</title>
+    <link rel="stylesheet" href="rdp-certificate-modal.css">
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        h1 {
+            color: #333;
+        }
+        .controls {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .control-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+        .control-group label {
+            width: 120px;
+            font-weight: 500;
+        }
+        .control-group input {
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .control-group button {
+            padding: 10px 20px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .control-group button:hover {
+            background: #218838;
+        }
+        .control-group button.disconnect {
+            background: #dc3545;
+        }
+        .control-group button.disconnect:hover {
+            background: #c82333;
+        }
+        .cert-management {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .cert-list {
+            margin-top: 10px;
+        }
+        .cert-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            background: #f8f9fa;
+            margin-bottom: 5px;
+            border-radius: 4px;
+        }
+        .cert-item button {
+            padding: 5px 10px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        #rdp-canvas {
+            width: 100%;
+            height: 600px;
+            background: #000;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+        }
+        .status {
+            padding: 10px;
+            margin-top: 10px;
+            border-radius: 4px;
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>RDP Certificate Validation Test</h1>
+        
+        <div class="controls">
+            <h2>Connection Settings</h2>
+            <div class="control-group">
+                <label>Hostname:</label>
+                <input type="text" id="hostname" value="win2k19-c2.nb.internal" placeholder="example.nb.internal">
+            </div>
+            <div class="control-group">
+                <label>Port:</label>
+                <input type="text" id="port" value="3389" placeholder="3389">
+            </div>
+            <div class="control-group">
+                <label>Username:</label>
+                <input type="text" id="username" value="Administrator" placeholder="username">
+            </div>
+            <div class="control-group">
+                <label>Password:</label>
+                <input type="password" id="password" placeholder="password">
+            </div>
+            <div class="control-group">
+                <label></label>
+                <button onclick="connectRDP()">Connect</button>
+                <button class="disconnect" onclick="disconnectRDP()">Disconnect</button>
+            </div>
+            <div id="status" class="status" style="display: none;"></div>
+        </div>
+
+        <div class="cert-management">
+            <h2>Trusted Certificates</h2>
+            <p>Certificates you have accepted for RDP connections:</p>
+            <div id="cert-list" class="cert-list"></div>
+            <button onclick="clearAllCerts()">Clear All Certificates</button>
+        </div>
+
+        <div>
+            <canvas id="rdp-canvas"></canvas>
+        </div>
+    </div>
+
+    <!-- Load required scripts -->
+    <script src="wasm_exec.js"></script>
+    <script src="rdp-certificate-handler.js"></script>
+    
+    <script>
+        let currentSession = null;
+        let certHandler = new RDPCertificateHandler();
+
+        // Display status messages
+        function showStatus(message, type = 'success') {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = 'status ' + type;
+            statusEl.style.display = 'block';
+            
+            if (type === 'success') {
+                setTimeout(() => {
+                    statusEl.style.display = 'none';
+                }, 5000);
+            }
+        }
+
+        // Load and display trusted certificates
+        function loadCertList() {
+            const certList = document.getElementById('cert-list');
+            const trustedCerts = certHandler.loadTrustedCerts();
+            
+            certList.innerHTML = '';
+            
+            if (Object.keys(trustedCerts).length === 0) {
+                certList.innerHTML = '<p style="color: #666;">No trusted certificates stored.</p>';
+                return;
+            }
+            
+            for (const [hostname, cert] of Object.entries(trustedCerts)) {
+                const item = document.createElement('div');
+                item.className = 'cert-item';
+                item.innerHTML = `
+                    <div>
+                        <strong>${hostname}</strong><br>
+                        <small>Fingerprint: ${cert.fingerprint.substring(0, 20)}...</small><br>
+                        <small>Saved: ${new Date(cert.savedAt).toLocaleDateString()}</small>
+                    </div>
+                    <button onclick="removeCert('${hostname}')">Remove</button>
+                `;
+                certList.appendChild(item);
+            }
+        }
+
+        // Remove a specific certificate
+        function removeCert(hostname) {
+            if (confirm(`Remove trusted certificate for ${hostname}?`)) {
+                certHandler.removeTrustedCert(hostname);
+                loadCertList();
+                showStatus(`Removed certificate for ${hostname}`, 'warning');
+            }
+        }
+
+        // Clear all certificates
+        function clearAllCerts() {
+            if (confirm('Remove all trusted certificates? You will need to re-accept certificates for all RDP connections.')) {
+                certHandler.clearTrustedCerts();
+                loadCertList();
+                showStatus('All trusted certificates cleared', 'warning');
+            }
+        }
+
+        // Connect to RDP with certificate validation
+        async function connectRDP() {
+            const hostname = document.getElementById('hostname').value;
+            const port = document.getElementById('port').value;
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const canvas = document.getElementById('rdp-canvas');
+
+            if (!hostname || !username || !password) {
+                showStatus('Please fill in all connection details', 'error');
+                return;
+            }
+
+            showStatus('Connecting to ' + hostname + '...', 'warning');
+
+            try {
+                // Load NetBird WASM if not already loaded
+                if (!window.netbirdInitialized) {
+                    showStatus('Loading NetBird WASM module...', 'warning');
+                    
+                    const go = new Go();
+                    const response = await fetch('netbird.wasm');
+                    const buffer = await response.arrayBuffer();
+                    const result = await WebAssembly.instantiate(buffer, go.importObject);
+                    go.run(result.instance);
+                    
+                    // Wait for initialization
+                    await new Promise(resolve => {
+                        const checkInit = setInterval(() => {
+                            if (window.netbirdInitialized) {
+                                clearInterval(checkInit);
+                                resolve();
+                            }
+                        }, 100);
+                    });
+                }
+
+                // Now connect with IronRDP
+                if (!window.ironrdpBridge) {
+                    // Load IronRDP bridge
+                    const module = await import('./ironrdp-wasm-bridge.js');
+                    window.ironrdpBridge = new module.default();
+                }
+
+                await window.ironrdpBridge.initialize();
+                
+                showStatus('Certificate validation enabled - connecting...', 'warning');
+                
+                // Connect with certificate validation
+                currentSession = await window.ironrdpBridge.connect(
+                    hostname,
+                    port,
+                    username,
+                    password,
+                    canvas
+                );
+
+                showStatus('Connected successfully!', 'success');
+                
+                // Reload cert list in case a new cert was added
+                loadCertList();
+                
+            } catch (error) {
+                console.error('Connection failed:', error);
+                showStatus('Connection failed: ' + error.message, 'error');
+            }
+        }
+
+        // Disconnect RDP
+        function disconnectRDP() {
+            if (currentSession && window.ironrdpBridge) {
+                window.ironrdpBridge.disconnect(currentSession);
+                currentSession = null;
+                showStatus('Disconnected', 'warning');
+            } else {
+                showStatus('No active connection', 'error');
+            }
+        }
+
+        // Load cert list on page load
+        window.addEventListener('load', () => {
+            loadCertList();
+        });
+    </script>
+</body>
+</html>

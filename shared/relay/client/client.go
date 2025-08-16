@@ -219,10 +219,10 @@ func (c *Client) OpenConn(ctx context.Context, dstPeerID string) (net.Conn, erro
 		c.mu.Unlock()
 		return nil, fmt.Errorf("relay connection is not established")
 	}
-	_, ok := c.conns[peerID]
+	existingContainer, ok := c.conns[peerID]
 	if ok {
 		c.mu.Unlock()
-		return nil, ErrConnAlreadyExists
+		return existingContainer.conn, nil
 	}
 	c.mu.Unlock()
 
@@ -231,7 +231,6 @@ func (c *Client) OpenConn(ctx context.Context, dstPeerID string) (net.Conn, erro
 		return nil, err
 	}
 
-	c.log.Infof("remote peer is available, prepare the relayed connection: %s", peerID)
 	msgChannel := make(chan Msg, 100)
 
 	c.mu.Lock()
@@ -245,11 +244,11 @@ func (c *Client) OpenConn(ctx context.Context, dstPeerID string) (net.Conn, erro
 	c.muInstanceURL.Unlock()
 	conn := NewConn(c, peerID, msgChannel, instanceURL)
 
-	_, ok = c.conns[peerID]
+	existingContainer, ok = c.conns[peerID]
 	if ok {
 		c.mu.Unlock()
 		_ = conn.Close()
-		return nil, ErrConnAlreadyExists
+		return existingContainer.conn, nil
 	}
 	c.conns[peerID] = newConnContainer(c.log, conn, msgChannel)
 	c.mu.Unlock()
@@ -364,7 +363,6 @@ func (c *Client) readLoop(hc *healthcheck.Receiver, relayConn net.Conn, internal
 		buf := *bufPtr
 		n, errExit = relayConn.Read(buf)
 		if errExit != nil {
-			c.log.Infof("start to Relay read loop exit")
 			c.mu.Lock()
 			if c.serviceIsRunning && !internallyStoppedFlag.isSet() {
 				c.log.Errorf("failed to read message from relay server: %s", errExit)
@@ -455,12 +453,24 @@ func (c *Client) handleTransportMsg(buf []byte, bufPtr *[]byte, internallyStoppe
 		c.bufPool.Put(bufPtr)
 		return false
 	}
+
 	container, ok := c.conns[*peerID]
 	c.mu.Unlock()
 	if !ok {
-		c.log.Errorf("peer not found: %s", peerID.String())
-		c.bufPool.Put(bufPtr)
-		return true
+		// Try to create a connection for this peer to handle incoming messages
+		msgChannel := make(chan Msg, 100)
+		c.muInstanceURL.Lock()
+		instanceURL := c.instanceURL
+		c.muInstanceURL.Unlock()
+		conn := NewConn(c, *peerID, msgChannel, instanceURL)
+
+		c.mu.Lock()
+		// Check again if connection was created while we were creating it
+		if _, exists := c.conns[*peerID]; !exists {
+			c.conns[*peerID] = newConnContainer(c.log, conn, msgChannel)
+		}
+		container = c.conns[*peerID]
+		c.mu.Unlock()
 	}
 	msg := Msg{
 		bufPool: c.bufPool,

@@ -1,0 +1,5 @@
+grpc-proxy-bin
+web/netbird.wasm
+web/wasm_exec.js
+web/ironrdp-pkg/
+test_srv/test_server

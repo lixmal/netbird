@@ -350,6 +350,14 @@ func (c *ConnectClient) Engine() *Engine {
 	return e
 }
 
+// GetStatusRecorder returns the status recorder for accessing detailed peer information
+func (c *ConnectClient) GetStatusRecorder() *peer.Status {
+	if c == nil {
+		return nil
+	}
+	return c.statusRecorder
+}
+
 // GetLatestSyncResponse returns the latest sync response from the engine.
 func (c *ConnectClient) GetLatestSyncResponse() (*mgmProto.SyncResponse, error) {
 	engine := c.Engine()

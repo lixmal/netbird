@@ -13,18 +13,20 @@ import (
 
 	"github.com/sirupsen/logrus"
 	wgnetstack "golang.zx2c4.com/wireguard/tun/netstack"
+	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/netbirdio/netbird/client/iface/netstack"
 	"github.com/netbirdio/netbird/client/internal"
 	"github.com/netbirdio/netbird/client/internal/peer"
 	"github.com/netbirdio/netbird/client/internal/profilemanager"
 	"github.com/netbirdio/netbird/client/system"
+	mgm "github.com/netbirdio/netbird/shared/management/client"
 )
 
 var ErrClientAlreadyStarted = errors.New("client already started")
 var ErrClientNotStarted = errors.New("client not started")
 
-// Client manages a netbird embedded client instance
+// Client manages a netbird embedded client instance.
 type Client struct {
 	deviceName string
 	config     *profilemanager.Config
@@ -34,7 +36,7 @@ type Client struct {
 	connect    *internal.ConnectClient
 }
 
-// Options configures a new Client
+// Options configures a new Client.
 type Options struct {
 	// DeviceName is this peer's name in the network
 	DeviceName string
@@ -58,7 +60,7 @@ type Options struct {
 	DisableClientRoutes bool
 }
 
-// New creates a new netbird embedded client
+// New creates a new netbird embedded client.
 func New(opts Options) (*Client, error) {
 	if opts.LogOutput != nil {
 		logrus.SetOutput(opts.LogOutput)
@@ -187,6 +189,59 @@ func (c *Client) Stop(ctx context.Context) error {
 	}
 }
 
+// GetSSHKey returns the SSH private key from the config.
+func (c *Client) GetSSHKey() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.config == nil {
+		return ""
+	}
+	return c.config.SSHKey
+}
+
+// Logout gracefully stops the client and removes the peer from the management server.
+// Pass a context with a deadline to limit the time spent waiting for the logout to complete.
+func (c *Client) Logout(ctx context.Context) error {
+	c.mu.Lock()
+	config := c.config
+	c.mu.Unlock()
+
+	if config == nil {
+		return fmt.Errorf("client config not initialized")
+	}
+
+	// First, stop the client connection
+	if err := c.Stop(ctx); err != nil && !errors.Is(err, ErrClientNotStarted) {
+		return fmt.Errorf("stop client: %w", err)
+	}
+
+	// Parse the private key for management client
+	key, err := wgtypes.ParseKey(config.PrivateKey)
+	if err != nil {
+		return fmt.Errorf("parse private key: %w", err)
+	}
+
+	// Connect to management service and send logout request
+	mgmTlsEnabled := config.ManagementURL.Scheme == "https"
+	mgmClient, err := mgm.NewClient(ctx, config.ManagementURL.Host, key, mgmTlsEnabled)
+	if err != nil {
+		return fmt.Errorf("connect to management server: %w", err)
+	}
+	defer func() {
+		if err := mgmClient.Close(); err != nil {
+			// Log but don't fail the logout
+			fmt.Printf("close management client: %v\n", err)
+		}
+	}()
+
+	// Send logout request to remove peer from management
+	if err := mgmClient.Logout(); err != nil {
+		return fmt.Errorf("logout from management: %w", err)
+	}
+
+	return nil
+}
+
 // Dial dials a network address in the netbird network.
 // Not applicable if the userspace networking mode is disabled.
 func (c *Client) Dial(ctx context.Context, network, address string) (net.Conn, error) {
@@ -211,7 +266,7 @@ func (c *Client) Dial(ctx context.Context, network, address string) (net.Conn, e
 	return nsnet.DialContext(ctx, network, address)
 }
 
-// ListenTCP listens on the given address in the netbird network
+// ListenTCP listens on the given address in the netbird network.
 // Not applicable if the userspace networking mode is disabled.
 func (c *Client) ListenTCP(address string) (net.Listener, error) {
 	nsnet, addr, err := c.getNet()
@@ -232,7 +287,7 @@ func (c *Client) ListenTCP(address string) (net.Listener, error) {
 	return nsnet.ListenTCP(tcpAddr)
 }
 
-// ListenUDP listens on the given address in the netbird network
+// ListenUDP listens on the given address in the netbird network.
 // Not applicable if the userspace networking mode is disabled.
 func (c *Client) ListenUDP(address string) (net.PacketConn, error) {
 	nsnet, addr, err := c.getNet()
@@ -264,6 +319,32 @@ func (c *Client) NewHTTPClient() *http.Client {
 	return &http.Client{
 		Transport: transport,
 	}
+}
+
+// GetConnect returns the internal ConnectClient for advanced operations
+func (c *Client) GetConnect() *internal.ConnectClient {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.connect
+}
+
+// GetStatus returns the current NetBird client status
+func (c *Client) GetStatus() (*peer.FullStatus, error) {
+	c.mu.Lock()
+	connect := c.connect
+	if connect == nil {
+		c.mu.Unlock()
+		return nil, ErrClientNotStarted
+	}
+	c.mu.Unlock()
+
+	statusRecorder := connect.GetStatusRecorder()
+	if statusRecorder == nil {
+		return nil, errors.New("status recorder not available")
+	}
+
+	fullStatus := statusRecorder.GetFullStatus()
+	return &fullStatus, nil
 }
 
 func (c *Client) getNet() (*wgnetstack.Net, netip.Addr, error) {

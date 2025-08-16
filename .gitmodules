@@ -1,0 +1,6 @@
+[submodule "client/wasm_example/IronRDP"]
+	path = client/wasm_example/IronRDP
+	url = https://github.com/Devolutions/IronRDP.git
+[submodule "client/netbird-rs/boringtun"]
+	path = client/netbird-rs/boringtun
+	url = https://github.com/cloudflare/boringtun.git
