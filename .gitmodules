@@ -1,0 +1,3 @@
+[submodule "client/wasm_example/IronRDP"]
+	path = client/wasm_example/IronRDP
+	url = https://github.com/Devolutions/IronRDP.git

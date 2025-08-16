@@ -1,0 +1,601 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>NetBird Status</title>
+    <style>
+        :root {
+            --nb-orange: #f68330;
+            --nb-orange-dark: #e55311;
+            --nb-blue: #31e4f5;
+            --nb-gray-950: #181a1d;
+            --nb-gray-930: #25282c;
+            --nb-gray-900: #32363D;
+            --nb-gray-800: #3f444b;
+            --nb-gray-700: #474e57;
+            --nb-gray-300: #aab4bd;
+            --nb-gray-100: #e4e7e9;
+            --nb-gray-50: #f4f6f7;
+            --success-green: #10b981;
+            --warning-yellow: #f59e0b;
+            --error-red: #ef4444;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: var(--nb-gray-50);
+            color: var(--nb-gray-950);
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        .header {
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .logo-section {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .logo-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 8px;
+        }
+        
+        h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        
+        .status-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status-badge.connected {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--success-green);
+        }
+        
+        .status-badge.connecting {
+            background: rgba(245, 158, 11, 0.1);
+            color: var(--warning-yellow);
+        }
+        
+        .status-badge.disconnected {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--error-red);
+        }
+        
+        .status-indicator {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+        }
+        
+        .status-indicator.connected {
+            background: var(--success-green);
+        }
+        
+        .status-indicator.connecting {
+            background: var(--warning-yellow);
+            animation: pulse 1.5s infinite;
+        }
+        
+        .status-indicator.disconnected {
+            background: var(--error-red);
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .info-card {
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        
+        .info-card h2 {
+            margin: 0 0 16px 0;
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--nb-gray-700);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid var(--nb-gray-100);
+        }
+        
+        .info-item:last-child {
+            border-bottom: none;
+        }
+        
+        .info-label {
+            color: var(--nb-gray-700);
+            font-size: 14px;
+        }
+        
+        .info-value {
+            color: var(--nb-gray-950);
+            font-size: 14px;
+            font-weight: 500;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+        }
+        
+        .peers-section {
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        
+        .peers-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        
+        .peers-header h2 {
+            margin: 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .peer-count {
+            background: var(--nb-gray-100);
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        
+        .peers-list {
+            display: grid;
+            gap: 12px;
+        }
+        
+        .peer-item {
+            border: 1px solid var(--nb-gray-100);
+            border-radius: 6px;
+            padding: 16px;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 16px;
+            align-items: center;
+        }
+        
+        .peer-status {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        
+        .peer-status.online {
+            background: var(--success-green);
+        }
+        
+        .peer-status.offline {
+            background: var(--nb-gray-300);
+        }
+        
+        .peer-info {
+            display: grid;
+            gap: 4px;
+        }
+        
+        .peer-name {
+            font-weight: 500;
+            color: var(--nb-gray-950);
+        }
+        
+        .peer-ip {
+            font-size: 13px;
+            color: var(--nb-gray-700);
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+        }
+        
+        .peer-connection {
+            font-size: 13px;
+            color: var(--nb-gray-700);
+        }
+        
+        .no-peers {
+            text-align: center;
+            padding: 40px;
+            color: var(--nb-gray-700);
+        }
+        
+        .actions {
+            margin-top: 20px;
+            display: flex;
+            gap: 12px;
+        }
+        
+        button {
+            padding: 10px 20px;
+            background: var(--nb-orange);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        
+        button:hover {
+            background: var(--nb-orange-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(246, 131, 48, 0.3);
+        }
+        
+        button:disabled {
+            background: var(--nb-gray-300);
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        button.secondary {
+            background: white;
+            color: var(--nb-gray-950);
+            border: 1px solid var(--nb-gray-100);
+        }
+        
+        button.secondary:hover {
+            background: var(--nb-gray-50);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .error-message {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--error-red);
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin: 20px 0;
+            display: none;
+        }
+        
+        .last-updated {
+            text-align: right;
+            font-size: 12px;
+            color: var(--nb-gray-700);
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo-section">
+                <img src="netbird.png" alt="NetBird Logo" class="logo-icon">
+                <h1>NetBird Status</h1>
+            </div>
+            <div class="status-badge disconnected" id="connectionStatus">
+                <span class="status-indicator disconnected"></span>
+                <span id="statusText">Disconnected</span>
+            </div>
+        </div>
+        
+        <div class="error-message" id="errorMessage"></div>
+        
+        <div class="info-grid">
+            <div class="info-card">
+                <h2>Connection Details</h2>
+                <div class="info-item">
+                    <span class="info-label">Device Name</span>
+                    <span class="info-value" id="deviceName">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Management URL</span>
+                    <span class="info-value" id="managementUrl">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">NetBird IP</span>
+                    <span class="info-value" id="netbirdIp">-</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Public Key</span>
+                    <span class="info-value" id="publicKey" style="font-size: 11px;">-</span>
+                </div>
+            </div>
+            
+            <div class="info-card">
+                <h2>Network Statistics</h2>
+                <div class="info-item">
+                    <span class="info-label">Connected Peers</span>
+                    <span class="info-value" id="connectedPeers">0</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Total Peers</span>
+                    <span class="info-value" id="totalPeers">0</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Bytes Sent</span>
+                    <span class="info-value" id="bytesSent">0</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Bytes Received</span>
+                    <span class="info-value" id="bytesReceived">0</span>
+                </div>
+            </div>
+            
+            <div class="info-card">
+                <h2>System Information</h2>
+                <div class="info-item">
+                    <span class="info-label">Client Version</span>
+                    <span class="info-value" id="clientVersion">WASM 1.0</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Protocol</span>
+                    <span class="info-value" id="protocol">WireGuard</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Interface</span>
+                    <span class="info-value" id="interface">Userspace</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Uptime</span>
+                    <span class="info-value" id="uptime">-</span>
+                </div>
+            </div>
+        </div>
+        
+        <div class="peers-section">
+            <div class="peers-header">
+                <h2>Peers</h2>
+                <span class="peer-count" id="peerCount">0 peers</span>
+            </div>
+            <div class="peers-list" id="peersList">
+                <div class="no-peers">No peers connected</div>
+            </div>
+        </div>
+        
+        <div class="actions">
+            <button onclick="refreshStatus()" id="refreshBtn">
+                <span id="refreshBtnText">Refresh Status</span>
+            </button>
+            <button onclick="window.location.href='index.html'" class="secondary">
+                Back to Dashboard
+            </button>
+        </div>
+        
+        <div class="last-updated" id="lastUpdated"></div>
+    </div>
+
+    <script>
+        let statusInterval;
+        let startTime = null;
+        
+        async function fetchStatus() {
+            try {
+                // Check if the NetBird WASM client is loaded
+                if (typeof window.parent.netbirdGetStatus !== 'function') {
+                    throw new Error('NetBird WASM client not loaded');
+                }
+                
+                // Get status from the parent window (main app)
+                const status = await window.parent.netbirdGetStatus();
+                updateUI(status);
+                hideError();
+            } catch (error) {
+                console.error('Failed to fetch status:', error);
+                showError('Failed to fetch status: ' + error.message);
+            }
+        }
+        
+        function updateUI(status) {
+            // Update connection status
+            const connected = status.connected || false;
+            const statusBadge = document.getElementById('connectionStatus');
+            const statusText = document.getElementById('statusText');
+            const indicator = statusBadge.querySelector('.status-indicator');
+            
+            if (connected) {
+                statusBadge.className = 'status-badge connected';
+                indicator.className = 'status-indicator connected';
+                statusText.textContent = 'Connected';
+                
+                if (!startTime) {
+                    startTime = new Date();
+                }
+            } else {
+                statusBadge.className = 'status-badge disconnected';
+                indicator.className = 'status-indicator disconnected';
+                statusText.textContent = status.status || 'Disconnected';
+                startTime = null;
+            }
+            
+            // Update connection details
+            document.getElementById('deviceName').textContent = status.deviceName || '-';
+            document.getElementById('managementUrl').textContent = status.managementURL || '-';
+            document.getElementById('netbirdIp').textContent = status.netbirdIp || '-';
+            document.getElementById('publicKey').textContent = status.publicKey || '-';
+            
+            // Update network statistics
+            document.getElementById('connectedPeers').textContent = status.connectedPeers || '0';
+            document.getElementById('totalPeers').textContent = status.peerCount || '0';
+            document.getElementById('bytesSent').textContent = formatBytes(status.bytesSent || 0);
+            document.getElementById('bytesReceived').textContent = formatBytes(status.bytesReceived || 0);
+            
+            // Update uptime
+            if (startTime && connected) {
+                updateUptime();
+            } else {
+                document.getElementById('uptime').textContent = '-';
+            }
+            
+            // Update peers list
+            updatePeersList(status.peers || []);
+            
+            // Update last updated time
+            document.getElementById('lastUpdated').textContent = 
+                'Last updated: ' + new Date().toLocaleTimeString();
+        }
+        
+        function updatePeersList(peers) {
+            const peersList = document.getElementById('peersList');
+            const peerCount = document.getElementById('peerCount');
+            
+            peerCount.textContent = peers.length + (peers.length === 1 ? ' peer' : ' peers');
+            
+            if (peers.length === 0) {
+                peersList.innerHTML = '<div class="no-peers">No peers discovered</div>';
+                return;
+            }
+            
+            peersList.innerHTML = peers.map(peer => {
+                const connectionType = peer.direct ? 'Direct' : (peer.relayed ? 'Relayed' : 'Unknown');
+                const latencyDisplay = peer.latency > 0 ? `${peer.latency}ms` : '-';
+                const bytesInfo = (peer.bytesSent > 0 || peer.bytesReceived > 0) 
+                    ? `↑ ${formatBytes(peer.bytesSent)} ↓ ${formatBytes(peer.bytesReceived)}`
+                    : '';
+                
+                return `
+                    <div class="peer-item">
+                        <span class="peer-status ${peer.connected ? 'online' : 'offline'}"></span>
+                        <div class="peer-info">
+                            <div class="peer-name">${peer.fqdn || peer.ip || 'Unknown'}</div>
+                            <div class="peer-ip">IP: ${peer.ip || '-'}</div>
+                            <div class="peer-connection">
+                                ${connectionType} • ${latencyDisplay} 
+                                ${bytesInfo ? '• ' + bytesInfo : ''}
+                            </div>
+                        </div>
+                        <div>
+                            <span style="color: ${peer.connected ? 'var(--success-green)' : 'var(--nb-gray-300)'}">
+                                ${peer.connStatus || 'Unknown'}
+                            </span>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function updateUptime() {
+            if (!startTime) return;
+            
+            const now = new Date();
+            const diff = now - startTime;
+            const hours = Math.floor(diff / 3600000);
+            const minutes = Math.floor((diff % 3600000) / 60000);
+            const seconds = Math.floor((diff % 60000) / 1000);
+            
+            let uptime = '';
+            if (hours > 0) uptime += hours + 'h ';
+            if (minutes > 0 || hours > 0) uptime += minutes + 'm ';
+            uptime += seconds + 's';
+            
+            document.getElementById('uptime').textContent = uptime;
+        }
+        
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+        
+        function hideError() {
+            document.getElementById('errorMessage').style.display = 'none';
+        }
+        
+        async function refreshStatus() {
+            const btn = document.getElementById('refreshBtn');
+            const btnText = document.getElementById('refreshBtnText');
+            
+            btn.disabled = true;
+            btnText.innerHTML = '<span class="loading"></span> Refreshing...';
+            
+            await fetchStatus();
+            
+            btn.disabled = false;
+            btnText.textContent = 'Refresh Status';
+        }
+        
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initial fetch
+            fetchStatus();
+            
+            // Set up auto-refresh every 5 seconds
+            statusInterval = setInterval(() => {
+                fetchStatus();
+            }, 5000);
+            
+            // Update uptime every second if connected
+            setInterval(() => {
+                if (startTime) {
+                    updateUptime();
+                }
+            }, 1000);
+        });
+        
+        // Clean up on page unload
+        window.addEventListener('beforeunload', () => {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+            }
+        });
+    </script>
+</body>
+</html>

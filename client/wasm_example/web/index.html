@@ -1,0 +1,2628 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>NetBird WASM Client</title>
+    <!-- xterm.js for SSH terminal -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+    
+    
+    <!-- Remote Desktop WASM Bridge -->
+    <script src="netbird-websocket-proxy.js"></script>
+    <script src="rdcleanpath-proxy-websocket.js"></script>
+    <script type="module" src="ironrdp-wasm-bridge.js"></script>
+    <script src="ironrdp-input-handler.js"></script>
+    <script src="ironrdp-connect-simple.js"></script>
+    <script src="rdp-certificate-handler.js"></script>
+    <link rel="stylesheet" href="rdp-certificate-modal.css">
+    <script src="vnc-websocket-proxy.js"></script>
+    <script src="vnc-connect.js"></script>
+    <style>
+        :root {
+            --nb-orange: #f68330;
+            --nb-orange-dark: #e55311;
+            --nb-blue: #31e4f5;
+            --nb-gray-950: #181a1d;
+            --nb-gray-930: #25282c;
+            --nb-gray-900: #32363D;
+            --nb-gray-800: #3f444b;
+            --nb-gray-700: #474e57;
+            --nb-gray-300: #aab4bd;
+            --nb-gray-100: #e4e7e9;
+            --nb-gray-50: #f4f6f7;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: var(--nb-gray-50);
+            height: 100vh;
+            overflow: hidden;
+        }
+        .app-container {
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        .header {
+            background: white;
+            border-bottom: 1px solid var(--nb-gray-100);
+            padding: 12px 20px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .netbird-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            border-radius: 6px;
+            color: white;
+        }
+        h1 {
+            color: var(--nb-gray-950);
+            margin: 0;
+            font-size: 20px;
+            font-weight: 600;
+        }
+        .main-content {
+            display: flex;
+            flex: 1;
+            overflow: hidden;
+        }
+        .tabs-container {
+            background: var(--nb-gray-950);
+            width: 220px;
+            padding: 12px 8px;
+            overflow-y: auto;
+            border-right: 1px solid var(--nb-gray-900);
+        }
+        .tab-button {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 100%;
+            padding: 10px 16px;
+            margin: 2px 0;
+            background: transparent;
+            color: var(--nb-gray-300);
+            border: none;
+            border-radius: 6px;
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .tab-button:hover {
+            background: var(--nb-gray-900);
+            color: white;
+        }
+        .tab-button.active {
+            background: var(--nb-orange);
+            color: white;
+        }
+        .tab-icon {
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+        .content-area {
+            flex: 1;
+            padding: 24px;
+            overflow-y: auto;
+            background: var(--nb-gray-50);
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+        .panel {
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            margin-bottom: 20px;
+            border: 1px solid var(--nb-gray-100);
+            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        }
+        .panel h2 {
+            margin-top: 0;
+            margin-bottom: 20px;
+            color: var(--nb-gray-950);
+            font-size: 18px;
+            font-weight: 600;
+        }
+        .controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .control-group {
+            display: flex;
+            flex-direction: column;
+        }
+        label {
+            font-size: 13px;
+            color: var(--nb-gray-700);
+            margin-bottom: 6px;
+            font-weight: 500;
+        }
+        input {
+            padding: 10px 12px;
+            border: 1px solid var(--nb-gray-100);
+            border-radius: 6px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+        input:focus {
+            outline: none;
+            border-color: var(--nb-orange);
+            box-shadow: 0 0 0 3px rgba(246, 131, 48, 0.1);
+        }
+        button {
+            padding: 10px 20px;
+            background: var(--nb-orange);
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+        button:hover {
+            background: var(--nb-orange-dark);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(246, 131, 48, 0.3);
+        }
+        button:disabled {
+            background: var(--nb-gray-300);
+            cursor: not-allowed;
+            transform: none;
+        }
+        #console {
+            background: var(--nb-gray-950);
+            color: var(--nb-gray-100);
+            padding: 16px;
+            height: 400px;
+            overflow-y: auto;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+            font-size: 13px;
+            border-radius: 6px;
+            white-space: pre-wrap;
+            border: 1px solid var(--nb-gray-900);
+        }
+        .url-bar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .url-bar input {
+            flex: 1;
+        }
+        .http-response {
+            background: var(--nb-gray-50);
+            border: 1px solid var(--nb-gray-100);
+            border-radius: 6px;
+            padding: 16px;
+            margin-top: 16px;
+            font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace;
+            font-size: 13px;
+            white-space: pre-wrap;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .status-indicator {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+        .status-indicator.disconnected {
+            background: #ef4444;
+        }
+        .status-indicator.connected {
+            background: #10b981;
+        }
+        .status-indicator.connecting {
+            background: var(--nb-orange);
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        /* Browser specific styles */
+        .browser-container {
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 200px);
+        }
+        .browser-bar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            align-items: center;
+        }
+        .browser-bar input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .browser-bar button {
+            padding: 10px 20px;
+            margin: 0;
+        }
+        .browser-frame-container {
+            flex: 1;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        #browserFrame {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        .browser-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 18px;
+            color: #666;
+        }
+        .connection-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .tab-icon {
+            display: inline-block;
+            width: 20px;
+            text-align: center;
+        }
+        
+        /* RDP Canvas styles */
+        #rdpCanvasContainer {
+            background: #000;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        /* Removed hover controls - use Ctrl+Shift+C instead */
+        
+        #rdpCanvasContainer.fullscreen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            width: 100vw !important;
+            height: 100vh !important;
+            z-index: 9999;
+            border: none !important;
+            border-radius: 0 !important;
+            margin: 0 !important;
+        }
+        
+        #rdpCanvasContainer.fullscreen #rdpCanvas {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: contain; /* This preserves aspect ratio with letterboxing */
+        }
+        
+        /* Alternative scaling mode without letterboxing */
+        #rdpCanvasContainer.fullscreen.stretch #rdpCanvas {
+            object-fit: fill !important; /* Stretches to fill without letterboxing */
+        }
+        
+        #rdpControls button {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        
+        #rdpControls button:hover {
+            background: rgba(255, 255, 255, 0.2);
+        }
+        
+        /* Controls are now outside canvas - always visible when RDP is connected */
+        #rdpControls {
+            display: flex !important;
+        }
+        
+        #rdpControls button {
+            color: white;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        /* Better canvas cursor */
+        #rdpCanvas {
+            image-rendering: crisp-edges;
+            image-rendering: -moz-crisp-edges;
+            image-rendering: -webkit-crisp-edges;
+            image-rendering: pixelated;
+        }
+        
+        #rdpCanvas:focus {
+            outline: 2px solid var(--nb-orange);
+            outline-offset: -2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="app-container">
+        <div class="header">
+            <div class="connection-header">
+                <div class="netbird-logo">
+                    <img src="netbird.png" alt="NetBird Logo" class="logo-icon">
+                    <h1>NetBird WASM Client</h1>
+                </div>
+                <div style="display: flex; align-items: center; gap: 12px;">
+                    <div style="display: flex; align-items: center;">
+                        <span class="status-indicator disconnected" id="statusIndicator"></span>
+                        <span id="statusText" style="font-size: 14px; color: var(--nb-gray-700); font-weight: 500;">Disconnected</span>
+                    </div>
+                    <select id="logLevel" style="padding: 8px 12px; border: 1px solid var(--nb-gray-100); border-radius: 6px; font-size: 14px;">
+                        <option value="error">Error</option>
+                        <option value="warn">Warn</option>
+                        <option value="info" selected>Info</option>
+                        <option value="debug">Debug</option>
+                        <option value="trace">Trace</option>
+                    </select>
+                    <button id="connectBtn" style="margin: 0;">Connect</button>
+                    <button id="disconnectBtn" onclick="disconnectClient()" style="display:none; margin: 0;">Disconnect</button>
+                    <button id="logoutBtn" onclick="logoutClient()" style="display:none; margin: 0;">Logout</button>
+                </div>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <div class="tabs-container">
+                <button class="tab-button active" onclick="switchTab('connection')">
+                    <span class="tab-icon">🔗</span> <span>Connection</span>
+                </button>
+                <button class="tab-button" onclick="switchTab('browser')">
+                    <span class="tab-icon">🌐</span> <span>Browser</span>
+                </button>
+                <button class="tab-button" onclick="switchTab('ssh')">
+                    <span class="tab-icon">⌨️</span> <span>SSH</span>
+                </button>
+                <button class="tab-button" onclick="switchTab('rdp')">
+                    <span class="tab-icon">🖥️</span> <span>RDP/VNC</span>
+                </button>
+                <button class="tab-button" onclick="switchTab('http')">
+                    <span class="tab-icon">🔌</span> <span>HTTP API</span>
+                </button>
+                <button class="tab-button" onclick="switchTab('status')">
+                    <span class="tab-icon">📊</span> <span>Status</span>
+                </button>
+                <button class="tab-button" onclick="switchTab('iperf3')">
+                    <span class="tab-icon">⚡</span> <span>iPerf3</span>
+                </button>
+            </div>
+            
+            <div class="content-area">
+                <!-- Connection Settings Tab -->
+                <div id="connectionTab" class="tab-content active">
+                    <div class="panel">
+                        <h2>Connection Settings</h2>
+                        <div class="controls">
+                            <div class="control-group">
+                                <label for="setupKey">Setup Key</label>
+                                <input id="setupKey" placeholder="Enter your NetBird setup key" type="text" value="09EA5475-566D-4AF9-95F7-7CF3BE0E8BAF">
+                            </div>
+                            <div class="control-group">
+                                <label for="managementUrl">Management URL</label>
+                                <input id="managementUrl" placeholder="https://api.netbird.io" type="text" value="http://localhost:8080">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Browser Tab -->
+                <div id="browserTab" class="tab-content">
+                    <div class="panel">
+                        <h2>Internal Resources Browser</h2>
+                        <div class="browser-container">
+                            <div class="browser-bar">
+                                <input id="browserUrl" placeholder="http://peer-hostname:8080" type="text" value="">
+                                <button onclick="browseUrl()">Go</button>
+                                <button onclick="refreshBrowser()">Refresh</button>
+                            </div>
+
+                            <div class="browser-frame-container">
+                                <div id="browserLoading" class="browser-loading" style="display:none;">Loading...</div>
+                                <iframe id="browserFrame" style="display:none;"></iframe>
+                                <div id="browserContent" style="padding: 20px;">
+                                    <p>Enter a URL above to browse NetBird internal resources.</p>
+                                    <p>The content will be fetched through the NetBird network and displayed here.</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- SSH Tab -->
+                <div id="sshTab" class="tab-content">
+                    <div class="panel">
+                        <h2>SSH Client</h2>
+                        <div class="url-bar">
+                            <input id="sshHost" placeholder="peer-hostname" type="text" value="">
+                            <input id="sshPort" placeholder="44338" type="text" value="44338" style="width: 100px;">
+                            <button onclick="connectSSH()">Connect SSH</button>
+                        </div>
+
+                        <div id="sshTerminal" style="margin-top: 15px;">
+                            <div id="sshTerminalContainer" style="background: #000; padding: 10px; height: 400px; border-radius: 4px;">
+                                <!-- xterm.js terminal will be created here -->
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- RDP/VNC Tab -->
+                <div id="rdpTab" class="tab-content">
+                    <div class="panel">
+                        <h2>Remote Desktop (RDP/VNC)</h2>
+                        <div class="controls">
+                            <div class="control-group">
+                                <label for="rdpHost">Host</label>
+                                <input id="rdpHost" placeholder="server.nb.internal" type="text" value="win2k19-c2.nb.internal">
+                            </div>
+                            <div class="control-group">
+                                <label for="rdpPort">Port</label>
+                                <input id="rdpPort" placeholder="3389 for RDP" type="text" value="3389">
+                            </div>
+                            <div class="control-group">
+                                <label for="rdpProtocol">Protocol</label>
+                                <select id="rdpProtocol" onchange="updatePortBasedOnProtocol()">
+                                    <option value="rdp">RDP</option>
+                                    <option value="vnc">VNC</option>
+                                </select>
+                            </div>
+                            <div class="control-group">
+                                <label for="rdpUsername">Username (optional)</label>
+                                <input id="rdpUsername" placeholder="username" type="text">
+                            </div>
+                            <div class="control-group">
+                                <label for="rdpPassword">Password (optional)</label>
+                                <input id="rdpPassword" placeholder="password" type="password">
+                            </div>
+                            <div class="control-group">
+                                <label style="display: flex; align-items: center; cursor: pointer;">
+                                    <input type="checkbox" id="rdpEnableClipboard" checked style="margin-right: 8px;">
+                                    Enable clipboard (RDP → Browser)
+                                </label>
+                                <small style="color: var(--nb-gray-500); margin-top: 4px; display: block;">
+                                    Allows copying text from RDP to your browser
+                                </small>
+                            </div>
+                            <div class="control-group">
+                                <label for="rdpResolution">Resolution</label>
+                                <select id="rdpResolution">
+                                    <option value="auto" selected>Auto (Fit to window)</option>
+                                    <option value="1920x1080">1920x1080 (Full HD)</option>
+                                    <option value="1680x1050">1680x1050 (WSXGA+)</option>
+                                    <option value="1600x900">1600x900 (HD+)</option>
+                                    <option value="1440x900">1440x900 (WXGA+)</option>
+                                    <option value="1366x768">1366x768 (HD)</option>
+                                    <option value="1280x1024">1280x1024 (SXGA)</option>
+                                    <option value="1280x800">1280x800 (WXGA)</option>
+                                    <option value="1280x720">1280x720 (720p)</option>
+                                    <option value="1024x768">1024x768 (XGA)</option>
+                                    <option value="800x600">800x600 (SVGA)</option>
+                                    <option value="custom">Custom...</option>
+                                </select>
+                            </div>
+                            <div class="control-group" id="customResolutionGroup" style="display: none;">
+                                <label>Custom Resolution</label>
+                                <div style="display: flex; gap: 8px;">
+                                    <input id="rdpCustomWidth" type="number" placeholder="Width" min="640" max="3840" style="width: 80px;">
+                                    <span>×</span>
+                                    <input id="rdpCustomHeight" type="number" placeholder="Height" min="480" max="2160" style="width: 80px;">
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label for="rdpCursor">Cursor Style</label>
+                                <select id="rdpCursor" onchange="changeCursor()">
+                                    <option value="default" selected>Default Arrow</option>
+                                    <option value="pointer">Pointer (Hand)</option>
+                                    <option value="crosshair">Crosshair</option>
+                                    <option value="text">Text (I-beam)</option>
+                                    <option value="move">Move (Four arrows)</option>
+                                    <option value="none">Hidden (Remote cursor only)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style="margin-top: 16px;">
+                            <button onclick="connectRemoteDesktop()" id="rdpConnectBtn">Connect</button>
+                            <button onclick="resizeRDPSession()" id="rdpResizeBtn" style="display:none;">Apply Resolution</button>
+                            <button onclick="disconnectRDP()" id="rdpDisconnectBtn" style="display:none;">Disconnect</button>
+                        </div>
+
+                        <div id="rdpStatus" style="margin-top: 16px; padding: 10px; background: #f0f0f0; border-radius: 4px; display: none;">
+                            <span id="rdpStatusText">Not connected</span>
+                        </div>
+                        <!-- RDP Controls moved outside canvas container -->
+                        <div id="rdpControls" style="margin-top: 16px; background: #2c2c2c; padding: 8px; display: none; gap: 8px; align-items: center; border-radius: 4px;">
+                            <span style="color: #aaa; font-size: 12px; margin-right: 8px;">Controls:</span>
+                            <button onclick="toggleFullscreen()" style="padding: 6px 12px; margin: 0; font-size: 13px;" title="Toggle Fullscreen (F11)">
+                                <span id="fullscreenIcon">⛶</span> Fullscreen
+                            </button>
+                            <button onclick="fitToWindow()" style="padding: 6px 12px; margin: 0; font-size: 13px;" title="Fit to Window">
+                                ⊡ Fit
+                            </button>
+                            <button onclick="zoomIn()" style="padding: 6px 12px; margin: 0; font-size: 13px;" title="Zoom In (Ctrl++)">
+                                🔍+
+                            </button>
+                            <button onclick="zoomOut()" style="padding: 6px 12px; margin: 0; font-size: 13px;" title="Zoom Out (Ctrl+-)">
+                                🔍-
+                            </button>
+                            <button onclick="resetZoom()" style="padding: 6px 12px; margin: 0; font-size: 13px;" title="Reset Zoom (Ctrl+0)">
+                                100%
+                            </button>
+                            <span style="margin-left: auto; color: white; font-size: 13px;">
+                                <span id="rdpResolutionDisplay">1024x768</span> | 
+                                <span id="rdpZoomLevel">100%</span>
+                            </span>
+                            <button onclick="sendCtrlAltDel()" style="padding: 6px 12px; margin: 0; font-size: 13px; background: #d32f2f;" title="Send Ctrl+Alt+Del">
+                                Ctrl+Alt+Del
+                            </button>
+                            <button onclick="disconnectRDP()" style="padding: 6px 12px; margin: 0; font-size: 13px;" title="Disconnect">
+                                ✕ Disconnect
+                            </button>
+                        </div>
+                        <div id="rdpCanvasContainer" style="margin-top: 8px; border: 1px solid #ddd; border-radius: 4px; display: none; position: relative;">
+                            <canvas id="rdpCanvas" style="display: block; width: 100%; height: auto; cursor: default;"></canvas>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- HTTP Client Tab -->
+                <div id="httpTab" class="tab-content">
+                    <div class="panel">
+                        <h2>HTTP Client</h2>
+                        <div class="url-bar">
+                            <input id="httpUrl" placeholder="http://peer-hostname:8080" type="text">
+                            <button onclick="sendHttpRequest()">Send Request</button>
+                        </div>
+
+                        <div id="httpResponse" class="http-response" style="display:none;">
+                            <strong>Response:</strong>
+                            <div id="responseContent"></div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Status Tab -->
+                <div id="statusTab" class="tab-content">
+                    <div class="panel">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                            <h2 style="margin: 0;">NetBird Status</h2>
+                            <div style="display: flex; align-items: center; gap: 12px;">
+                                <span id="statusLastUpdated" style="font-size: 12px; color: var(--nb-gray-700);"></span>
+                                <button onclick="refreshNetbirdStatus()" style="margin: 0;">Refresh</button>
+                            </div>
+                        </div>
+                        <div id="statusContent">
+                            <!-- Connection Info Cards -->
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 16px; margin-bottom: 20px;">
+                                <div style="background: #f8f9fa; padding: 16px; border-radius: 8px;">
+                                    <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #666; text-transform: uppercase;">Connection</h3>
+                                    <div style="font-size: 13px;">
+                                        <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                            <span>Device Name:</span>
+                                            <span id="statusDeviceName" style="font-family: monospace;">-</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                            <span>NetBird IP:</span>
+                                            <span id="statusNetbirdIp" style="font-family: monospace;">-</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                            <span>Management:</span>
+                                            <span id="statusMgmtUrl" style="font-family: monospace; font-size: 11px;">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div style="background: #f8f9fa; padding: 16px; border-radius: 8px;">
+                                    <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #666; text-transform: uppercase;">Network</h3>
+                                    <div style="font-size: 13px;">
+                                        <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                            <span>Connected Peers:</span>
+                                            <span id="statusConnectedPeers" style="font-weight: 600;">0</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                            <span>Total Peers:</span>
+                                            <span id="statusTotalPeers">0</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                            <span>Uptime:</span>
+                                            <span id="statusUptime">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <div style="background: #f8f9fa; padding: 16px; border-radius: 8px;">
+                                    <h3 style="margin: 0 0 12px 0; font-size: 14px; color: #666; text-transform: uppercase;">System</h3>
+                                    <div style="font-size: 13px;">
+                                        <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                            <span>Management:</span>
+                                            <span id="statusMgmtState">-</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                            <span>Signal:</span>
+                                            <span id="statusSignalState">-</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; padding: 4px 0;">
+                                            <span>Lazy Mode:</span>
+                                            <span id="statusLazyMode">-</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Peers Section -->
+                            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px; margin-bottom: 16px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                                    <h3 style="margin: 0; font-size: 16px;">Peers</h3>
+                                    <span id="statusPeerCount" style="background: white; padding: 4px 12px; border-radius: 12px; font-size: 13px;">0 peers</span>
+                                </div>
+                                <div id="statusPeersList" style="display: grid; gap: 8px; max-height: 300px; overflow-y: auto;">
+                                    <div style="text-align: center; padding: 20px; color: #666;">No peers discovered</div>
+                                </div>
+                            </div>
+                            
+                            <!-- Logs Section -->
+                            <div style="background: #f8f9fa; padding: 16px; border-radius: 8px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                                    <h3 style="margin: 0; font-size: 16px;">Console Output</h3>
+                                    <div style="display: flex; gap: 8px; align-items: center;">
+                                        <input id="statusLogFilter" type="text" placeholder="Filter logs..." style="padding: 4px 8px; border: 1px solid #ccc; border-radius: 4px; font-size: 12px; width: 120px;" oninput="filterStatusLogs()">
+                                        <label style="display: flex; align-items: center; gap: 4px; font-size: 13px; white-space: nowrap;">
+                                            <input type="checkbox" id="statusAutoScroll" checked onchange="toggleStatusAutoScroll()">
+                                            Auto-scroll
+                                        </label>
+                                        <button onclick="clearStatusLogs()" style="padding: 4px 12px; font-size: 13px; margin: 0;">Clear</button>
+                                        <button onclick="copyStatusLogs()" style="padding: 4px 12px; font-size: 13px; margin: 0;">Copy Logs</button>
+                                    </div>
+                                </div>
+                                <div id="statusLogs" style="background: var(--nb-gray-950); color: var(--nb-gray-100); padding: 16px; border-radius: 6px; font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace; font-size: 13px; height: 400px; overflow-y: auto; white-space: pre-wrap; border: 1px solid var(--nb-gray-900);">
+                                    <div style="color: #888;">Waiting for logs...</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- iPerf3 Tab -->
+                <div id="iperf3Tab" class="tab-content">
+                    <div class="panel">
+                        <h2>iPerf3 Network Performance Test</h2>
+                        <div class="controls">
+                            <div class="control-group">
+                                <label for="iperf3Host">Server Host</label>
+                                <input id="iperf3Host" placeholder="peer-hostname or IP" type="text" value="">
+                            </div>
+                            <div class="control-group">
+                                <label for="iperf3Port">Server Port</label>
+                                <input id="iperf3Port" placeholder="5201" type="text" value="5201">
+                            </div>
+                            <div class="control-group">
+                                <label for="iperf3Duration">Test Duration (seconds)</label>
+                                <input id="iperf3Duration" type="number" min="1" max="300" value="10">
+                            </div>
+                            <div class="control-group">
+                                <label for="iperf3Direction">Test Direction</label>
+                                <select id="iperf3Direction">
+                                    <option value="forward">Upload (Client → Server)</option>
+                                    <option value="reverse">Download (Server → Client)</option>
+                                </select>
+                            </div>
+                            <div class="control-group">
+                                <label for="iperf3Protocol">Protocol</label>
+                                <select id="iperf3Protocol">
+                                    <option value="tcp">TCP</option>
+                                    <option value="udp">UDP</option>
+                                </select>
+                            </div>
+                            <div class="control-group">
+                                <label for="iperf3Bandwidth">Bandwidth Limit (Mbps, 0=unlimited)</label>
+                                <input id="iperf3Bandwidth" type="number" min="0" value="0">
+                            </div>
+                        </div>
+                        
+                        <div style="margin-top: 20px;">
+                            <button onclick="startIperf3()" id="iperf3StartBtn">Start Test</button>
+                            <button onclick="stopIperf3()" id="iperf3StopBtn" style="display:none;">Stop Test</button>
+                        </div>
+                        
+                        <!-- Test Status -->
+                        <div id="iperf3Status" style="margin-top: 20px; padding: 16px; background: #f8f9fa; border-radius: 8px; display: none;">
+                            <h3 style="margin: 0 0 12px 0; font-size: 16px;">Test Status</h3>
+                            <div id="iperf3StatusText" style="font-size: 14px; color: #666;">Preparing test...</div>
+                        </div>
+                        
+                        <!-- Real-time Performance Graph -->
+                        <div id="iperf3Graph" style="margin-top: 20px; padding: 16px; background: #f8f9fa; border-radius: 8px; display: none;">
+                            <h3 style="margin: 0 0 12px 0; font-size: 16px;">Real-time Performance</h3>
+                            <canvas id="iperf3Canvas" width="400" height="120" style="width: 100%; max-width: 400px; border: 1px solid #ddd; background: white;"></canvas>
+                            <div style="margin-top: 8px; display: flex; justify-content: space-between; font-size: 13px;">
+                                <span>Current: <strong id="iperf3CurrentSpeed">0 Mbps</strong></span>
+                                <span>Average: <strong id="iperf3AvgSpeed">0 Mbps</strong></span>
+                                <span>Peak: <strong id="iperf3PeakSpeed">0 Mbps</strong></span>
+                            </div>
+                        </div>
+                        
+                        <!-- Test Results -->
+                        <div id="iperf3Results" style="margin-top: 20px; padding: 16px; background: #f8f9fa; border-radius: 8px; display: none;">
+                            <h3 style="margin: 0 0 12px 0; font-size: 16px;">Test Results</h3>
+                            <div id="iperf3ResultsContent" style="font-family: 'SF Mono', 'Monaco', 'Inconsolata', 'Fira Code', monospace; font-size: 13px;">
+                                <!-- Results will be displayed here -->
+                            </div>
+                        </div>
+                        
+                        <!-- Error Messages -->
+                        <div id="iperf3Error" style="margin-top: 20px; padding: 16px; background: #fee; border: 1px solid #fcc; border-radius: 8px; display: none;">
+                            <strong style="color: #c00;">Error:</strong>
+                            <span id="iperf3ErrorText"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="wasm_exec.js"></script>
+    <script>
+        let go = null;
+        let netbirdConnected = false;
+        let currentBrowserUrl = null;
+        let allLogs = [];
+        
+        // Tab switching functionality
+        function switchTab(tabName) {
+            // Remove active class from all tabs and buttons
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-button').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            
+            // Add active class to selected tab and button
+            document.getElementById(tabName + 'Tab').classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+
+        function updateStatus(status) {
+            const indicator = document.getElementById('statusIndicator');
+            const text = document.getElementById('statusText');
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const logoutBtn = document.getElementById('logoutBtn');
+            
+            indicator.className = 'status-indicator ' + status;
+            
+            switch(status) {
+                case 'connected':
+                    text.textContent = 'Connected';
+                    connectBtn.style.display = 'none';
+                    disconnectBtn.style.display = 'inline-block';
+                    logoutBtn.style.display = 'inline-block';
+                    break;
+                case 'connecting':
+                    text.textContent = 'Connecting...';
+                    connectBtn.textContent = 'Connecting...';
+                    connectBtn.disabled = true;
+                    disconnectBtn.style.display = 'none';
+                    logoutBtn.style.display = 'none';
+                    break;
+                case 'disconnected':
+                    text.textContent = 'Disconnected';
+                    connectBtn.textContent = 'Connect';
+                    connectBtn.disabled = false;
+                    connectBtn.style.display = 'inline-block';
+                    disconnectBtn.style.display = 'none';
+                    logoutBtn.style.display = 'none';
+                    netbirdConnected = false;
+                    break;
+            }
+        }
+
+        function setUrl(url) {
+            document.getElementById('httpUrl').value = url;
+        }
+        
+        function setBrowserUrl(url) {
+            document.getElementById('browserUrl').value = url;
+            browseUrl();
+        }
+        
+        
+        // Browser functions
+        async function browseUrl() {
+            if (!netbirdConnected) {
+                alert('Please connect to NetBird first');
+                return;
+            }
+            
+            const url = document.getElementById('browserUrl').value;
+            if (!url) {
+                alert('Please enter a URL');
+                return;
+            }
+            
+            currentBrowserUrl = url;
+            await loadInBrowser(url);
+        }
+        
+        async function refreshBrowser() {
+            if (currentBrowserUrl) {
+                await loadInBrowser(currentBrowserUrl);
+            }
+        }
+        
+        async function loadInBrowser(url) {
+            console.log(`Loading in browser: ${url}`);
+            
+            const browserContent = document.getElementById('browserContent');
+            const browserFrame = document.getElementById('browserFrame');
+            const browserLoading = document.getElementById('browserLoading');
+            
+            // Show loading
+            browserContent.style.display = 'none';
+            browserFrame.style.display = 'none';
+            browserLoading.style.display = 'block';
+            
+            try {
+                // Fetch content through NetBird
+                if (window.makeNetbirdRequest) {
+                    const response = await window.makeNetbirdRequest(url);
+                    
+                    // Parse response to extract HTML content
+                    const lines = response.split('\n');
+                    let htmlContent = '';
+                    let inBody = false;
+                    
+                    for (const line of lines) {
+                        if (line === '') {
+                            inBody = true;
+                            continue;
+                        }
+                        if (inBody) {
+                            htmlContent += line + '\n';
+                        }
+                    }
+                    
+                    // Process the HTML to make links work
+                    htmlContent = processHtmlContent(htmlContent, url);
+                    
+                    // Calculate base URL for the injected script
+                    const baseUrl = url.replace(/\/[^\/]*$/, '');
+                    
+                    // Inject a proxy script using postMessage for cross-origin communication
+                    const proxyScript = '<scr' + 'ipt>' +
+                        '(function() {\n' +
+                        '    console.log("Installing NetBird fetch proxy in iframe...");\n' +
+                        '    \n' +
+                        '    // Generate unique request IDs\n' +
+                        '    let requestId = 0;\n' +
+                        '    const pendingRequests = {};\n' +
+                        '    \n' +
+                        '    // Listen for responses from parent\n' +
+                        '    window.addEventListener("message", function(event) {\n' +
+                        '        if (event.data && event.data.type === "netbird-proxy-response") {\n' +
+                        '            const pending = pendingRequests[event.data.id];\n' +
+                        '            if (pending) {\n' +
+                        '                delete pendingRequests[event.data.id];\n' +
+                        '                if (event.data.error) {\n' +
+                        '                    pending.reject(new Error(event.data.error));\n' +
+                        '                } else {\n' +
+                        '                    pending.resolve(event.data.response);\n' +
+                        '                }\n' +
+                        '            }\n' +
+                        '        }\n' +
+                        '    });\n' +
+                        '    \n' +
+                        '    // Store original fetch\n' +
+                        '    const origFetch = window.fetch;\n' +
+                        '    \n' +
+                        '    // Override fetch\n' +
+                        '    window.fetch = function(input, init) {\n' +
+                        '        // Get URL string\n' +
+                        '        let urlStr = "";\n' +
+                        '        if (typeof input === "string") {\n' +
+                        '            urlStr = input;\n' +
+                        '        } else if (input && input.url) {\n' +
+                        '            urlStr = input.url;\n' +
+                        '        } else if (input && input.toString) {\n' +
+                        '            urlStr = input.toString();\n' +
+                        '        }\n' +
+                        '        \n' +
+                        '        // Build absolute URL\n' +
+                        '        if (!urlStr.startsWith("http")) {\n' +
+                        '            // Use pre-calculated base URL\n' +
+                        '            const base = "' + baseUrl + '";\n' +
+                        '            if (urlStr.startsWith("/")) {\n' +
+                        '                // Absolute path - replace everything after domain\n' +
+                        '                const parts = base.split("/");\n' +
+                        '                urlStr = parts[0] + "//" + parts[2] + urlStr;\n' +
+                        '            } else {\n' +
+                        '                // Relative path\n' +
+                        '                urlStr = base + "/" + urlStr;\n' +
+                        '            }\n' +
+                        '        }\n' +
+                        '        \n' +
+                        '        // Check for NetBird internal domains\n' +
+                        '        if (urlStr.includes(".nb.internal")) {\n' +
+                        '            console.log("Proxying NetBird request:", urlStr);\n' +
+                        '            \n' +
+                        '            return new Promise(function(resolve, reject) {\n' +
+                        '                const id = ++requestId;\n' +
+                        '                pendingRequests[id] = { resolve: resolve, reject: reject };\n' +
+                        '                \n' +
+                        '                // Send request to parent via postMessage\n' +
+                        '                parent.postMessage({\n' +
+                        '                    type: "netbird-proxy-request",\n' +
+                        '                    id: id,\n' +
+                        '                    url: urlStr\n' +
+                        '                }, "*");\n' +
+                        '                \n' +
+                        '                // Timeout after 30 seconds\n' +
+                        '                setTimeout(function() {\n' +
+                        '                    if (pendingRequests[id]) {\n' +
+                        '                        delete pendingRequests[id];\n' +
+                        '                        reject(new Error("Request timeout"));\n' +
+                        '                    }\n' +
+                        '                }, 30000);\n' +
+                        '            }).then(function(data) {\n' +
+                        '                // Create Response from data\n' +
+                        '                return new Response(data.body, {\n' +
+                        '                    status: data.status || 200,\n' +
+                        '                    statusText: data.statusText || "OK",\n' +
+                        '                    headers: data.headers || {}\n' +
+                        '                });\n' +
+                        '            });\n' +
+                        '        }\n' +
+                        '        \n' +
+                        '        // Use original fetch for non-NetBird URLs\n' +
+                        '        return origFetch.apply(this, arguments);\n' +
+                        '    };\n' +
+                        '    \n' +
+                        '    console.log("NetBird proxy ready");\n' +
+                        '})();\n' +
+                        '</scr' + 'ipt>';
+                    
+                    // Insert proxy script at the very beginning of head or body
+                    if (htmlContent.includes('<head>')) {
+                        htmlContent = htmlContent.replace('<head>', '<head>' + proxyScript);
+                    } else if (htmlContent.includes('<head ')) {
+                        // Handle head tag with attributes
+                        htmlContent = htmlContent.replace(/<head([^>]*)>/, function(match) {
+                            return match + proxyScript;
+                        });
+                    } else if (htmlContent.includes('<body>')) {
+                        htmlContent = htmlContent.replace('<body>', '<body>' + proxyScript);  
+                    } else if (htmlContent.includes('<body ')) {
+                        // Handle body tag with attributes
+                        htmlContent = htmlContent.replace(/<body([^>]*)>/, function(match) {
+                            return match + proxyScript;
+                        });
+                    } else {
+                        // If no head or body, prepend to content
+                        htmlContent = proxyScript + htmlContent;
+                    }
+                    
+                    // Create a blob URL for the iframe
+                    const blob = new Blob([htmlContent], { type: 'text/html' });
+                    const blobUrl = URL.createObjectURL(blob);
+                    
+                    // Load in iframe
+                    browserFrame.src = blobUrl;
+                    browserFrame.style.display = 'block';
+                    browserLoading.style.display = 'none';
+                    
+                    // Set up iframe load handler to intercept navigation
+                    browserFrame.onload = function() {
+                        try {
+                            // Inject click handler for links
+                            const doc = browserFrame.contentDocument || browserFrame.contentWindow.document;
+                            doc.addEventListener('click', function(e) {
+                                if (e.target.tagName === 'A') {
+                                    e.preventDefault();
+                                    const href = e.target.getAttribute('href');
+                                    const newUrl = resolveUrl(url, href);
+                                    document.getElementById('browserUrl').value = newUrl;
+                                    loadInBrowser(newUrl);
+                                }
+                            });
+                        } catch (e) {
+                            // Cross-origin access might be blocked
+                            console.log('Could not inject link handler:', e);
+                        }
+                    };
+                } else {
+                    browserLoading.style.display = 'none';
+                    browserContent.style.display = 'block';
+                    browserContent.innerHTML = '<p>HTTP client not available. Please wait for WASM module to initialize.</p>';
+                }
+            } catch (err) {
+                browserLoading.style.display = 'none';
+                browserContent.style.display = 'block';
+                browserContent.innerHTML = `<p style="color: red;">Error loading page: ${err}</p>`;
+            }
+        }
+        
+        function processHtmlContent(html, baseUrl) {
+            // Parse base URL
+            const urlParts = baseUrl.match(/^(https?:\/\/[^\/]+)(\/.*)?$/);
+            const baseHost = urlParts ? urlParts[1] : baseUrl;
+            
+            // Calculate base path
+            let basePath = '/';
+            if (urlParts && urlParts[2]) {
+                const lastSlash = urlParts[2].lastIndexOf('/');
+                if (lastSlash >= 0) {
+                    basePath = urlParts[2].substring(0, lastSlash + 1);
+                }
+            }
+            
+            // Add base tag for relative URLs
+            if (!html.includes('<base')) {
+                html = `<base href="${baseHost}${basePath}">` + html;
+            }
+            
+            // Don't process URLs that already have the host - let the base tag handle it
+            // This prevents double-processing
+            
+            return html;
+        }
+        
+        function resolveUrl(baseUrl, relativeUrl) {
+            if (relativeUrl.startsWith('http://') || relativeUrl.startsWith('https://')) {
+                return relativeUrl;
+            }
+            
+            const urlParts = baseUrl.match(/^(https?:\/\/[^\/]+)(\/.*)?$/);
+            const baseHost = urlParts ? urlParts[1] : baseUrl;
+            
+            if (relativeUrl.startsWith('/')) {
+                return baseHost + relativeUrl;
+            } else {
+                // Get the base path from the URL
+                let basePath = '/';
+                if (urlParts && urlParts[2]) {
+                    const lastSlash = urlParts[2].lastIndexOf('/');
+                    if (lastSlash >= 0) {
+                        basePath = urlParts[2].substring(0, lastSlash + 1);
+                    }
+                } else {
+                    // If no path in URL, add a trailing slash
+                    basePath = '/';
+                }
+                return baseHost + basePath + relativeUrl;
+            }
+        }
+
+        async function disconnectClient() {
+            if (!netbirdConnected) {
+                alert('Client not connected');
+                return;
+            }
+            
+            console.log('Disconnecting NetBird client...');
+            try {
+                const result = await window.netbirdDisconnect();
+                console.log(result);
+                updateStatus('disconnected');
+            } catch (err) {
+                console.error('Disconnect failed:', err);
+                alert('Failed to disconnect: ' + err);
+            }
+        }
+
+        async function logoutClient() {
+            if (!netbirdConnected && !nbClient) {
+                alert('Client not connected');
+                return;
+            }
+            
+            console.log('Logging out from NetBird...');
+            try {
+                const result = await window.netbirdLogout();
+                console.log(result);
+                updateStatus('disconnected');
+                // Reset the client as logout removes it from management
+                go = null;
+                nbClient = null;
+            } catch (err) {
+                console.error('Logout failed:', err);
+                alert('Failed to logout: ' + err);
+            }
+        }
+
+        async function connectClient() {
+            if (netbirdConnected) {
+                return;
+            }
+            
+            const setupKey = document.getElementById('setupKey').value;
+            const managementUrl = document.getElementById('managementUrl').value;
+            const logLevel = document.getElementById('logLevel').value;
+            
+            if (!setupKey) {
+                alert('Please enter a setup key');
+                return;
+            }
+
+            updateStatus('connecting');
+
+            try {
+                // Load WASM module if not already loaded
+                if (!window.createNetBirdClient) {
+                    go = new Go();
+                    
+                    const result = await WebAssembly.instantiateStreaming(
+                        fetch("netbird.wasm"), 
+                        go.importObject
+                    );
+                    
+                    console.log('Starting NetBird WASM module...');
+                    go.run(result.instance);
+                    
+                    // Wait for WASM to initialize
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+                
+                // Create NetBird client with the new API
+                console.log('Creating NetBird client...');
+                const options = {
+                    setupKey: setupKey,
+                    logLevel: logLevel
+                };
+                
+                // Only add management URL if provided and not the default
+                if (managementUrl && managementUrl !== 'https://api.netbird.io') {
+                    options.managementURL = managementUrl;
+                }
+                
+                const result = await window.createNetBirdClient(options);
+                console.log('NetBird client created:', result);
+                
+                // The client is now connected
+                netbirdConnected = true;
+                updateStatus('connected');
+                
+            } catch (err) {
+                console.error('Error connecting:', err);
+                updateStatus('disconnected');
+                alert('Failed to connect: ' + err);
+            }
+        }
+
+
+        async function sendHttpRequest() {
+            if (!netbirdConnected) {
+                alert('Please connect to NetBird first');
+                return;
+            }
+            
+            const url = document.getElementById('httpUrl').value;
+            if (!url) {
+                alert('Please enter a URL');
+                return;
+            }
+            
+            console.log(`Sending HTTP request to: ${url}`);
+            
+            // Show response area
+            document.getElementById('httpResponse').style.display = 'block';
+            document.getElementById('responseContent').textContent = 'Loading...';
+            
+            // Send message to WASM to make the request
+            if (window.makeNetbirdRequest) {
+                try {
+                    const response = await window.makeNetbirdRequest(url);
+                    document.getElementById('responseContent').textContent = response;
+                } catch (err) {
+                    document.getElementById('responseContent').textContent = `Error: ${err}`;
+                }
+            } else {
+                document.getElementById('responseContent').textContent = 
+                    'HTTP client not yet available. The WASM module may still be initializing.';
+            }
+        }
+
+        function setSshTarget(host, port) {
+            document.getElementById('sshHost').value = host;
+            document.getElementById('sshPort').value = port;
+        }
+
+        let sshTerminal = null;
+        let sshConnection = null;
+        let sshClient = null;
+        
+        // Helper function to get user input with consistent UI
+        async function getUserInput(promptText, inputType = 'text', defaultValue = '') {
+            return new Promise((resolve) => {
+                const dialog = document.createElement('div');
+                dialog.style.cssText = 'position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);background:white;padding:20px;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.2);z-index:10000;min-width:300px';
+                
+                dialog.innerHTML = `
+                    <div style="margin-bottom:10px;font-weight:500">${promptText}</div>
+                    <input type="${inputType}" id="tempUserInput" style="width:100%;padding:8px;box-sizing:border-box;border:1px solid #ccc;border-radius:4px" value="${defaultValue}" autofocus>
+                    <div style="margin-top:15px;text-align:right">
+                        <button id="inputCancel" style="margin-right:10px;padding:6px 12px;border:1px solid #ccc;background:white;border-radius:4px;cursor:pointer">Cancel</button>
+                        <button id="inputOk" style="padding:6px 12px;background:#007acc;color:white;border:none;border-radius:4px;cursor:pointer">OK</button>
+                    </div>
+                `;
+                
+                document.body.appendChild(dialog);
+                
+                const input = document.getElementById('tempUserInput');
+                const okBtn = document.getElementById('inputOk');
+                const cancelBtn = document.getElementById('inputCancel');
+                
+                const submit = () => {
+                    const value = input.value;
+                    document.body.removeChild(dialog);
+                    resolve(value);
+                };
+                
+                const cancel = () => {
+                    document.body.removeChild(dialog);
+                    resolve('');
+                };
+                
+                okBtn.onclick = submit;
+                cancelBtn.onclick = cancel;
+                input.onkeydown = (e) => {
+                    if (e.key === 'Enter') submit();
+                    if (e.key === 'Escape') cancel();
+                };
+                
+                input.focus();
+                input.select();
+            });
+        }
+        
+        async function connectSSH() {
+            if (!netbirdConnected) {
+                alert('Please connect to NetBird first');
+                return;
+            }
+            
+            const host = document.getElementById('sshHost').value;
+            const port = document.getElementById('sshPort').value;
+            
+            if (!host || !port) {
+                alert('Please enter SSH host and port');
+                return;
+            }
+            
+            console.log(`Connecting to SSH: ${host}:${port}`);
+            document.getElementById('sshTerminal').style.display = 'block';
+            
+            // Create xterm.js terminal if not exists
+            if (!sshTerminal) {
+                const container = document.getElementById('sshTerminalContainer');
+                container.innerHTML = ''; // Clear any existing content
+                
+                sshTerminal = new Terminal({
+                    cursorBlink: true,
+                    fontSize: 14,
+                    fontFamily: 'Consolas, Monaco, monospace',
+                    theme: {
+                        background: '#1e1e1e',
+                        foreground: '#d4d4d4'
+                    }
+                });
+                
+                const fitAddon = new FitAddon.FitAddon();
+                sshTerminal.loadAddon(fitAddon);
+                sshTerminal.open(container);
+                fitAddon.fit();
+            }
+            
+            // Show terminal if hidden
+            document.getElementById('sshTerminal').style.display = 'block';
+            
+            sshTerminal.writeln('Connecting to ' + host + ':' + port + '...');
+            
+            // Use Go SSH implementation with NetBird's key-based authentication
+            if (window.netbirdSSH) {
+                try {
+                    // NetBird SSH uses key-based authentication, no password needed
+                    // Default username is "root" but can be overridden
+                    const sshSession = await window.netbirdSSH(host, parseInt(port));
+                    
+                    sshTerminal.writeln('\x1b[32mConnected!\x1b[0m\r\n');
+                    
+                    // Set up data handler to receive SSH output
+                    sshSession.ondata = (data) => {
+                        const decoder = new TextDecoder();
+                        sshTerminal.write(decoder.decode(data));
+                    };
+                    
+                    // Set up close handler
+                    sshSession.onclose = () => {
+                        sshTerminal.writeln('\r\n\x1b[33mConnection closed\x1b[0m');
+                        sshConnection = null;
+                    };
+                    
+                    // Send terminal input to SSH
+                    sshTerminal.onData((data) => {
+                        sshSession.write(data);
+                    });
+                    
+                    // Handle terminal resize
+                    sshTerminal.onResize((size) => {
+                        sshSession.resize(size.cols, size.rows);
+                    });
+                    
+                    sshConnection = sshSession;
+                    
+                } catch (err) {
+                    console.error('SSH connection failed:', err);
+                    sshTerminal.writeln('\r\n\x1b[31mConnection failed: ' + err + '\x1b[0m');
+                }
+            } else {
+                sshTerminal.writeln('\r\n\x1b[31mSSH support not available. WASM module may still be loading.\x1b[0m');
+            }
+        }
+
+
+        async function connectWebSocketTCP(host, port, protocol) {
+            // Use internal NetBird TCP connection instead of external WebSocket
+            console.log(`Connecting to ${protocol.toUpperCase()}: ${host}:${port} via NetBird`);
+            
+            if (!window.netbirdConnectTCP) {
+                const errorMsg = `NetBird TCP proxy not ready. Wait for client to fully initialize.`;
+                if (protocol === 'ssh' && sshTerminal) {
+                    sshTerminal.writeln('\r\n\x1b[31m' + errorMsg + '\x1b[0m');
+                }
+                return;
+            }
+            
+            // Get credentials before establishing connection
+            let username, password;
+            if (protocol === 'ssh') {
+                username = await getUserInput('SSH Username:', 'text', 'user');
+                if (!username) {
+                    console.log('SSH connection cancelled by user');
+                    return;
+                }
+                password = await getUserInput('SSH Password for ' + username + ':', 'password', '');
+            }
+            
+            // Call the Go function to establish TCP connection through NetBird
+            window.netbirdConnectTCP(host, parseInt(port), protocol).then(async ws => {
+                
+                try {
+                    // Connection is already established when promise resolves
+                    if (protocol === 'ssh') {
+                        if (sshTerminal) {
+                            sshTerminal.writeln('\r\n\x1b[32mTCP connection to ' + host + ':' + port + ' established\x1b[0m');
+                        
+                        // Set up message handler
+                        ws.onmessage = (event) => {
+                            if (event.data instanceof ArrayBuffer && sshClient) {
+                                const data = new Uint8Array(event.data);
+                                sshClient.handleData(data);
+                            }
+                        };
+                        
+                        // Create SSH client (simplified version that doesn't override handlers)
+                        const sshClient = {
+                            terminal: sshTerminal,
+                            ws: ws,
+                            protocolState: 'HANDSHAKE',
+                            serverIdent: '',
+                            clientIdent: 'SSH-2.0-SSHyClient_NetBird',
+                            incomingBuffer: new Uint8Array(0),
+                            
+                            connect: function(user, pass) {
+                                this.username = user;
+                                this.password = pass;
+                                const ident = this.clientIdent + '\r\n';
+                                const encoder = new TextEncoder();
+                                const identBytes = encoder.encode(ident);
+                                ws.send(identBytes);
+                            },
+                            
+                            handleData: function(data) {
+                                // Append to buffer
+                                const newBuffer = new Uint8Array(this.incomingBuffer.length + data.length);
+                                newBuffer.set(this.incomingBuffer);
+                                newBuffer.set(data, this.incomingBuffer.length);
+                                this.incomingBuffer = newBuffer;
+                                
+                                // Try to decode as text for handshake
+                                const decoder = new TextDecoder();
+                                const text = decoder.decode(this.incomingBuffer);
+                                
+                                if (this.protocolState === 'HANDSHAKE') {
+                                    const crlfIndex = text.indexOf('\r\n');
+                                    if (crlfIndex !== -1) {
+                                        this.serverIdent = text.substring(0, crlfIndex);
+                                        this.terminal.writeln('\r\nServer: ' + this.serverIdent);
+                                        this.incomingBuffer = this.incomingBuffer.slice(crlfIndex + 2);
+                                        
+                                        // For now, just display what we receive
+                                        this.terminal.writeln('\r\n\x1b[33mSSH handshake would continue here...\x1b[0m');
+                                        this.terminal.writeln('Use the full SSHy implementation for complete SSH support.');
+                                        this.protocolState = 'RAW';
+                                    }
+                                } else {
+                                    // Display raw data
+                                    this.terminal.write(decoder.decode(data));
+                                    this.incomingBuffer = new Uint8Array(0);
+                                }
+                            },
+                            
+                            sendInput: function(data) {
+                                const encoder = new TextEncoder();
+                                ws.send(encoder.encode(data));
+                            }
+                        };
+                        
+                        window.sshClient = sshClient; // Make it global for debugging
+                        sshConnection = ws;
+                        
+                        // Connect with credentials (this sends the SSH version string)
+                        sshClient.connect(username, password);
+                        
+                        // Handle terminal input
+                        sshTerminal.onData((data) => {
+                            if (sshClient) {
+                                sshClient.sendInput(data);
+                            }
+                        });
+                        
+                        ws.onclose = () => {
+                            console.log('WebSocket closed');
+                            sshTerminal.writeln('\r\n\x1b[33mConnection closed\x1b[0m');
+                            sshConnection = null;
+                        };
+                        }
+                    }
+                } catch (innerErr) {
+                    console.error('Error in SSH setup:', innerErr);
+                    if (sshTerminal) {
+                        sshTerminal.writeln('\r\n\x1b[31mError: ' + (innerErr.message || innerErr) + '\x1b[0m');
+                    }
+                }
+                
+            }).catch(err => {
+                console.error('TCP connection failed:', err);
+                
+                let errorMsg = 'Failed to connect: ';
+                if (typeof err === 'string') {
+                    errorMsg += err;
+                } else if (err && typeof err.message === 'string') {
+                    errorMsg += err.message;
+                } else {
+                    errorMsg += 'Connection error';
+                }
+                
+                if (protocol === 'ssh') {
+                    if (sshTerminal) {
+                        sshTerminal.writeln('\r\n\x1b[31m' + errorMsg + '\x1b[0m');
+                    }
+                }
+            });
+        }
+        
+        // RDP/VNC functionality
+        let guacamoleClient = null;
+        let guacamoleTunnel = null;
+        let currentRdpConnection = null;
+        
+        function setRdpTarget(host, port, protocol) {
+            document.getElementById('rdpHost').value = host;
+            document.getElementById('rdpPort').value = port;
+            document.getElementById('rdpProtocol').value = protocol;
+        }
+        
+        
+        // Direct RDP connection (bypassing Guacamole protocol)
+        
+        
+        
+        // Test WebSocket Bridge function
+        function testWebSocketBridge() {
+            if (!netbirdConnected) {
+                alert('Please connect to NetBird first');
+                return;
+            }
+            
+            const host = document.getElementById('rdpHost').value || 'win2k19-c2.nb.internal';
+            const port = parseInt(document.getElementById('rdpPort').value || '3389');
+            
+            console.log('Testing WebSocket Bridge to', host, port);
+            
+            // Create a WebSocket connection through our bridge
+            const ws = new WebSocket(`ws://localhost:8083/target/${host}:${port}`);
+            
+            ws.onopen = (event) => {
+                console.log('WebSocket bridge connected!', event);
+                alert('WebSocket bridge connected successfully! Check console for details.');
+                
+                // Send a test RDP connection request
+                const connectionRequest = new Uint8Array([
+                    0x03, 0x00, 0x00, 0x13,  // TPKT Header
+                    0x0E, 0xE0, 0x00, 0x00,  // X.224 CR
+                    0x00, 0x00, 0x00,        // DST-REF, SRC-REF
+                    0x01, 0x00, 0x08, 0x00,  // RDP_NEG_REQ
+                    0x00, 0x00, 0x00, 0x00   // Requested protocols
+                ]);
+                
+                ws.send(connectionRequest);
+                console.log('Sent test RDP connection request');
+            };
+            
+            ws.onmessage = (event) => {
+                console.log('WebSocket bridge received data:', event.data);
+                
+                // Convert and log the response
+                if (event.data instanceof ArrayBuffer) {
+                    const bytes = new Uint8Array(event.data);
+                    console.log('Response bytes:', bytes);
+                    
+                    if (bytes[0] === 0x03 && bytes[5] === 0xD0) {
+                        console.log('Received X.224 Connection Confirm!');
+                    }
+                }
+            };
+            
+            ws.onerror = (error) => {
+                console.error('WebSocket bridge error:', error);
+                alert('WebSocket bridge error! Check console.');
+            };
+            
+            ws.onclose = (event) => {
+                console.log('WebSocket bridge closed:', event);
+            };
+            
+            // Store for cleanup
+            window.testWebSocket = ws;
+        }
+        
+        // Connect using Remote Desktop WASM Client
+        
+        function disconnectRDP() {
+            // Exit fullscreen if active
+            if (document.fullscreenElement) {
+                document.exitFullscreen();
+            }
+            
+            // Close any test WebSocket
+            if (window.testWebSocket) {
+                window.testWebSocket.close();
+                window.testWebSocket = null;
+            }
+            
+            // Close any RDP client
+            if (window.currentRdpClient) {
+                if (window.currentRdpClient.disconnect) {
+                    window.currentRdpClient.disconnect();
+                }
+                window.currentRdpClient = null;
+            }
+            
+            // Disconnect Remote Desktop session
+            if (window.IronRDPBridge && window.currentIronRDPSession) {
+                window.IronRDPBridge.disconnect(window.currentIronRDPSession);
+                window.currentIronRDPSession = null;
+            }
+            
+            // Clear the canvas
+            const canvas = document.getElementById('rdpCanvas');
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#000000';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+            
+            // Update UI - safely check elements exist
+            const statusText = document.getElementById('rdpStatusText');
+            if (statusText) statusText.textContent = 'Disconnected';
+            
+            const canvasContainer = document.getElementById('rdpCanvasContainer');
+            if (canvasContainer) canvasContainer.style.display = 'none';
+            
+            const controls = document.getElementById('rdpControls');
+            if (controls) controls.style.display = 'none';
+            
+            const testBtn = document.getElementById('testBridgeBtn');
+            if (testBtn) testBtn.style.display = 'inline-block';
+            
+            const connectBtn = document.getElementById('rdpConnectBtn');
+            if (connectBtn) connectBtn.style.display = 'inline-block';
+            
+            const disconnectBtn = document.getElementById('rdpDisconnectBtn');
+            if (disconnectBtn) disconnectBtn.style.display = 'none';
+        }
+        
+        function updatePortBasedOnProtocol() {
+            const protocol = document.getElementById('rdpProtocol').value;
+            const portInput = document.getElementById('rdpPort');
+            
+            if (protocol === 'vnc') {
+                portInput.value = '5900';
+                portInput.placeholder = '5900 for VNC';
+            } else {
+                portInput.value = '3389';
+                portInput.placeholder = '3389 for RDP';
+            }
+        }
+        
+        function changeCursor() {
+            const canvas = document.getElementById('rdpCanvas');
+            const cursorSelect = document.getElementById('rdpCursor');
+            if (canvas && cursorSelect) {
+                canvas.style.cursor = cursorSelect.value;
+            }
+        }
+        
+        function resizeRDPSession() {
+            if (!window.currentIronRDPSession || !window.IronRDPBridge) {
+                alert('No active RDP session to resize');
+                return;
+            }
+            
+            // Get resolution setting
+            const resolutionSelect = document.getElementById('rdpResolution');
+            const resolutionValue = resolutionSelect ? resolutionSelect.value : 'auto';
+            const canvas = document.getElementById('rdpCanvas');
+            
+            let width, height;
+            
+            if (resolutionValue === 'auto') {
+                // Auto - fit to container size
+                const container = document.getElementById('rdpCanvasContainer');
+                width = Math.min(1920, container.clientWidth || 1024);
+                height = Math.min(1080, Math.floor(width * 0.75));
+            } else if (resolutionValue === 'custom') {
+                // Custom resolution
+                const customWidth = document.getElementById('rdpCustomWidth');
+                const customHeight = document.getElementById('rdpCustomHeight');
+                width = parseInt(customWidth?.value) || 1024;
+                height = parseInt(customHeight?.value) || 768;
+            } else {
+                // Preset resolution
+                const [w, h] = resolutionValue.split('x').map(v => parseInt(v));
+                width = w || 1024;
+                height = h || 768;
+            }
+            
+            // Validate resolution
+            width = Math.max(640, Math.min(3840, width));
+            height = Math.max(480, Math.min(2160, height));
+            
+            // Update canvas
+            canvas.width = width;
+            canvas.height = height;
+            
+            // Call IronRDP resize
+            try {
+                if (window.IronRDPBridge.session) {
+                    window.IronRDPBridge.session.resize(width, height);
+                    console.log(`Resized RDP session to ${width}x${height}`);
+                    document.getElementById('rdpStatusText').textContent = `Resized to ${width}x${height}`;
+                    
+                    // Update resolution display
+                    if (window.updateResolutionDisplay) {
+                        window.updateResolutionDisplay(width, height);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to resize RDP session:', err);
+                alert('Failed to resize session: ' + err.message);
+            }
+        }
+        
+        // RDP View Controls
+        let currentZoom = 1.0;
+        let hideControlsTimeout = null;
+        
+        function toggleFullscreen() {
+            const container = document.getElementById('rdpCanvasContainer');
+            const icon = document.getElementById('fullscreenIcon');
+            const canvas = document.getElementById('rdpCanvas');
+            
+            if (!document.fullscreenElement) {
+                container.requestFullscreen().then(() => {
+                    container.classList.add('fullscreen');
+                    icon.textContent = '⬚';
+                    
+                    // Ensure canvas properly fills the screen
+                    if (canvas) {
+                        // Force a repaint to fix initial black letterbox
+                        canvas.style.display = 'none';
+                        setTimeout(() => {
+                            canvas.style.display = 'block';
+                        }, 10);
+                    }
+                }).catch(err => {
+                    console.error('Error entering fullscreen:', err);
+                });
+            } else {
+                document.exitFullscreen().then(() => {
+                    container.classList.remove('fullscreen');
+                    icon.textContent = '⛶';
+                });
+            }
+        }
+        
+        function fitToWindow() {
+            const canvas = document.getElementById('rdpCanvas');
+            const container = document.getElementById('rdpCanvasContainer');
+            
+            // Reset zoom and let CSS handle fitting
+            currentZoom = 1.0;
+            canvas.style.transform = '';
+            canvas.style.width = '100%';
+            canvas.style.height = 'auto';
+            updateZoomDisplay();
+        }
+        
+        function zoomIn() {
+            const canvas = document.getElementById('rdpCanvas');
+            currentZoom = Math.min(currentZoom + 0.1, 3.0);
+            canvas.style.transform = `scale(${currentZoom})`;
+            canvas.style.transformOrigin = 'center center';
+            updateZoomDisplay();
+        }
+        
+        function zoomOut() {
+            const canvas = document.getElementById('rdpCanvas');
+            currentZoom = Math.max(currentZoom - 0.1, 0.5);
+            canvas.style.transform = `scale(${currentZoom})`;
+            canvas.style.transformOrigin = 'center center';
+            updateZoomDisplay();
+        }
+        
+        function resetZoom() {
+            const canvas = document.getElementById('rdpCanvas');
+            currentZoom = 1.0;
+            canvas.style.transform = '';
+            updateZoomDisplay();
+        }
+        
+        function updateZoomDisplay() {
+            document.getElementById('rdpZoomLevel').textContent = Math.round(currentZoom * 100) + '%';
+        }
+        
+        function setupAutoHideControls() {
+            const container = document.getElementById('rdpCanvasContainer');
+            const controls = document.getElementById('rdpControls');
+            
+            // Start with controls hidden
+            container.classList.add('hide-controls');
+            
+            // Use a key combination to show/hide controls instead of hover
+            // This prevents interference with RDP UI elements
+            let controlsVisible = false;
+            
+            // Don't interfere with right-click - just prevent context menu
+            container.addEventListener('contextmenu', (e) => {
+                e.preventDefault();
+            });
+            
+            // Show/hide controls with Ctrl+Shift+C
+            document.addEventListener('keydown', (e) => {
+                if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+                    e.preventDefault();
+                    controlsVisible = !controlsVisible;
+                    
+                    if (controlsVisible) {
+                        container.classList.remove('hide-controls');
+                        console.log('RDP controls shown - use Ctrl+Shift+C to hide');
+                        // Auto-hide after 8 seconds
+                        clearTimeout(hideControlsTimeout);
+                        hideControlsTimeout = setTimeout(() => {
+                            container.classList.add('hide-controls');
+                            controlsVisible = false;
+                            console.log('RDP controls auto-hidden');
+                        }, 8000);
+                    } else {
+                        container.classList.add('hide-controls');
+                        clearTimeout(hideControlsTimeout);
+                        console.log('RDP controls hidden');
+                    }
+                }
+            });
+            
+            // Keep controls visible when actually hovering over them (only if already shown)
+            controls.addEventListener('mouseenter', () => {
+                if (controlsVisible) {
+                    clearTimeout(hideControlsTimeout);
+                    console.log('Controls hover - keeping visible');
+                }
+            });
+            
+            // Hide controls when leaving the controls area (only if they were visible)
+            controls.addEventListener('mouseleave', () => {
+                if (controlsVisible) {
+                    clearTimeout(hideControlsTimeout);
+                    hideControlsTimeout = setTimeout(() => {
+                        container.classList.add('hide-controls');
+                        controlsVisible = false;
+                        console.log('Left controls area - hiding');
+                    }, 3000);
+                }
+            });
+        }
+        
+        function clearAutoHideControls() {
+            clearTimeout(hideControlsTimeout);
+            const container = document.getElementById('rdpCanvasContainer');
+            container.classList.remove('hide-controls');
+        }
+        
+        function sendCtrlAltDel() {
+            console.log('Sending Ctrl+Alt+Del...');
+            
+            // If using IronRDP
+            if (window.IronRDPBridge && window.currentIronRDPSession) {
+                const session = window.IronRDPBridge.sessions.get(window.currentIronRDPSession);
+                if (session && session.inputHandler) {
+                    const handler = session.inputHandler;
+                    const ironrdp = window.IronRDPBridge.ironrdp;
+                    
+                    try {
+                        // Create a transaction with Ctrl+Alt+Del key combination
+                        const transaction = new ironrdp.InputTransaction();
+                        
+                        // Press Ctrl, Alt, Del
+                        transaction.addEvent(ironrdp.DeviceEvent.keyPressed(0x1D)); // Ctrl
+                        transaction.addEvent(ironrdp.DeviceEvent.keyPressed(0x38)); // Alt
+                        transaction.addEvent(ironrdp.DeviceEvent.keyPressed(0x53)); // Delete
+                        
+                        // Release in reverse order
+                        transaction.addEvent(ironrdp.DeviceEvent.keyReleased(0x53)); // Delete
+                        transaction.addEvent(ironrdp.DeviceEvent.keyReleased(0x38)); // Alt
+                        transaction.addEvent(ironrdp.DeviceEvent.keyReleased(0x1D)); // Ctrl
+                        
+                        session.applyInputs(transaction);
+                        transaction.free();
+                        
+                        console.log('Ctrl+Alt+Del sent successfully');
+                    } catch (err) {
+                        console.error('Error sending Ctrl+Alt+Del:', err);
+                    }
+                }
+            }
+        }
+        
+        // Update resolution display when canvas changes
+        function updateResolutionDisplay(width, height) {
+            const display = document.getElementById('rdpResolutionDisplay');
+            if (display) {
+                display.textContent = `${width}x${height}`;
+            }
+        }
+        
+        // Handle fullscreen changes via ESC key
+        document.addEventListener('fullscreenchange', () => {
+            const container = document.getElementById('rdpCanvasContainer');
+            if (!document.fullscreenElement) {
+                container.classList.remove('fullscreen');
+                clearAutoHideControls();
+            }
+        });
+        
+        // Add page visibility listener to pause/resume auto-refresh
+        document.addEventListener('visibilitychange', function() {
+            if (isStatusTabActive) {
+                if (document.hidden) {
+                    // Page went to background - stop auto-refresh
+                    stopStatusAutoRefresh();
+                } else {
+                    // Page came to foreground - resume auto-refresh
+                    startStatusAutoRefresh();
+                    // Also refresh immediately when coming back to foreground
+                    if (netbirdConnected) {
+                        refreshNetbirdStatus();
+                    }
+                }
+            }
+        });
+
+        // Add event listeners when DOM is ready
+        document.addEventListener('DOMContentLoaded', function() {
+            // Setup keyboard shortcuts for RDP controls
+            document.addEventListener('keydown', function(e) {
+                // Only handle shortcuts when RDP canvas is visible
+                const container = document.getElementById('rdpCanvasContainer');
+                if (!container || container.style.display === 'none') return;
+                
+                // F11 for fullscreen
+                if (e.key === 'F11') {
+                    e.preventDefault();
+                    toggleFullscreen();
+                }
+                // Ctrl++ for zoom in
+                else if (e.ctrlKey && (e.key === '+' || e.key === '=')) {
+                    e.preventDefault();
+                    zoomIn();
+                }
+                // Ctrl+- for zoom out
+                else if (e.ctrlKey && e.key === '-') {
+                    e.preventDefault();
+                    zoomOut();
+                }
+                // Ctrl+0 for reset zoom
+                else if (e.ctrlKey && e.key === '0') {
+                    e.preventDefault();
+                    resetZoom();
+                }
+            });
+            
+            // Handle resolution dropdown changes
+            const resolutionSelect = document.getElementById('rdpResolution');
+            const customResGroup = document.getElementById('customResolutionGroup');
+            if (resolutionSelect) {
+                resolutionSelect.addEventListener('change', function() {
+                    if (this.value === 'custom') {
+                        customResGroup.style.display = 'block';
+                    } else {
+                        customResGroup.style.display = 'none';
+                    }
+                });
+            }
+            
+            const connectBtn = document.getElementById('connectBtn');
+            if (connectBtn) {
+                connectBtn.addEventListener('click', connectClient);
+            }
+            
+            // Set up message handler for iframe proxy requests
+            window.addEventListener('message', async function(event) {
+                if (event.data && event.data.type === 'netbird-proxy-request') {
+                    console.log('Parent received proxy request:', event.data.url);
+                    
+                    try {
+                        // Use netbirdProxyRequest if available, otherwise makeNetbirdRequest
+                        let response;
+                        if (window.netbirdProxyRequest) {
+                            response = await window.netbirdProxyRequest(event.data.url);
+                        } else if (window.makeNetbirdRequest) {
+                            // Parse the text response from makeNetbirdRequest
+                            const textResponse = await window.makeNetbirdRequest(event.data.url);
+                            const lines = textResponse.split('\n');
+                            let bodyStart = lines.findIndex(line => line === '') + 1;
+                            const body = lines.slice(bodyStart).join('\n');
+                            
+                            response = {
+                                status: 200,
+                                statusText: 'OK',
+                                body: body,
+                                headers: {'content-type': 'application/json'}
+                            };
+                        } else {
+                            throw new Error('NetBird proxy not available');
+                        }
+                        
+                        // Send response back to iframe
+                        event.source.postMessage({
+                            type: 'netbird-proxy-response',
+                            id: event.data.id,
+                            response: response
+                        }, event.origin);
+                        
+                    } catch (error) {
+                        console.error('Proxy request failed:', error);
+                        event.source.postMessage({
+                            type: 'netbird-proxy-response',
+                            id: event.data.id,
+                            error: error.toString()
+                        }, event.origin);
+                    }
+                }
+            });
+        });
+        
+        // Status page functionality
+        let statusStartTime = null;
+        let statusInterval = null;
+        let statusAutoScroll = true;
+        let isStatusTabActive = false;
+        
+        async function refreshNetbirdStatus() {
+            if (!netbirdConnected) {
+                updateStatusDisplay({
+                    connected: false,
+                    status: 'Disconnected',
+                    deviceName: 'wasm-client',
+                    managementURL: document.getElementById('managementUrl').value || '-',
+                    error: 'NetBird client not connected'
+                });
+                return;
+            }
+            
+            try {
+                const status = await window.netbirdGetStatus();
+                updateStatusDisplay(status);
+            } catch (error) {
+                console.error('Failed to get status:', error);
+                updateStatusDisplay({
+                    connected: false,
+                    status: 'Error',
+                    error: error.message
+                });
+            }
+        }
+        
+        function updateStatusDisplay(status) {
+            // Update basic info
+            document.getElementById('statusDeviceName').textContent = status.deviceName || 'wasm-client';
+            document.getElementById('statusNetbirdIp').textContent = status.netbirdIp || '-';
+            document.getElementById('statusMgmtUrl').textContent = status.managementURL || '-';
+            
+            // Update network stats
+            document.getElementById('statusConnectedPeers').textContent = status.connectedPeers || '0';
+            document.getElementById('statusTotalPeers').textContent = status.totalPeers || status.peerCount || '0';
+            
+            // Update system status
+            if (status.management) {
+                document.getElementById('statusMgmtState').textContent = status.management.connected ? '✓ Connected' : '✗ Disconnected';
+                document.getElementById('statusMgmtState').style.color = status.management.connected ? '#10b981' : '#ef4444';
+            }
+            if (status.signal) {
+                document.getElementById('statusSignalState').textContent = status.signal.connected ? '✓ Connected' : '✗ Disconnected';
+                document.getElementById('statusSignalState').style.color = status.signal.connected ? '#10b981' : '#ef4444';
+            }
+            
+            // Update lazy mode status
+            if (status.lazyConnectionEnabled !== undefined) {
+                document.getElementById('statusLazyMode').textContent = status.lazyConnectionEnabled ? '✓ Enabled' : '✗ Disabled';
+                document.getElementById('statusLazyMode').style.color = status.lazyConnectionEnabled ? '#f68330' : '#666';
+            }
+            
+            // Update uptime
+            if (status.connected && !statusStartTime) {
+                statusStartTime = new Date();
+            } else if (!status.connected) {
+                statusStartTime = null;
+            }
+            updateStatusUptime();
+            
+            // Update peers list
+            updateStatusPeersList(status.peers || []);
+            
+            // Update last updated time
+            document.getElementById('statusLastUpdated').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+        }
+        
+        function updateStatusPeersList(peers) {
+            const peersList = document.getElementById('statusPeersList');
+            const peerCount = document.getElementById('statusPeerCount');
+            
+            peerCount.textContent = peers.length + (peers.length === 1 ? ' peer' : ' peers');
+            
+            if (peers.length === 0) {
+                peersList.innerHTML = '<div style="text-align: center; padding: 20px; color: #666;">No peers discovered</div>';
+                return;
+            }
+            
+            // Sort peers: connected first, then alphabetically
+            peers.sort((a, b) => {
+                if (a.connected !== b.connected) {
+                    return b.connected ? 1 : -1;
+                }
+                const aName = a.fqdn || a.ip || '';
+                const bName = b.fqdn || b.ip || '';
+                return aName.localeCompare(bName);
+            });
+            
+            peersList.innerHTML = peers.map(peer => {
+                const latencyDisplay = peer.latency > 0 ? `${peer.latency}ms` : '-';
+                const statusColor = peer.connected ? '#10b981' : '#aaa';
+                
+                // Format handshake age
+                let handshakeDisplay = '-';
+                if (peer.handshakeAge && peer.handshakeAge > 0) {
+                    if (peer.handshakeAge < 60) {
+                        handshakeDisplay = `${peer.handshakeAge}s ago`;
+                    } else if (peer.handshakeAge < 3600) {
+                        handshakeDisplay = `${Math.floor(peer.handshakeAge / 60)}m ago`;
+                    } else {
+                        handshakeDisplay = `${Math.floor(peer.handshakeAge / 3600)}h ago`;
+                    }
+                }
+                
+                // Format traffic counters
+                const formatBytes = (bytes) => {
+                    if (bytes === 0) return '0 B';
+                    if (bytes < 1024) return `${bytes} B`;
+                    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+                    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+                    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+                };
+                
+                const trafficDisplay = (peer.bytesTx > 0 || peer.bytesRx > 0) 
+                    ? `↑${formatBytes(peer.bytesTx)} ↓${formatBytes(peer.bytesRx)}`
+                    : 'No traffic';
+                
+                // Format connection type and relay status
+                const connectionType = peer.relayed ? 'Relayed' : 'Direct';
+                const relayInfo = peer.relayed && peer.relayServer ? ` via ${peer.relayServer}` : '';
+                
+                // Format connection update age
+                let connectionUpdateDisplay = '-';
+                if (peer.connectionUpdateAge && peer.connectionUpdateAge > 0) {
+                    if (peer.connectionUpdateAge < 60) {
+                        connectionUpdateDisplay = `${peer.connectionUpdateAge}s ago`;
+                    } else if (peer.connectionUpdateAge < 3600) {
+                        connectionUpdateDisplay = `${Math.floor(peer.connectionUpdateAge / 60)}m ago`;
+                    } else {
+                        connectionUpdateDisplay = `${Math.floor(peer.connectionUpdateAge / 3600)}h ago`;
+                    }
+                }
+                
+                // Format routes
+                const routesDisplay = peer.routes && peer.routes.length > 0 
+                    ? `${peer.routes.length} routes: ${peer.routes.join(', ')}` 
+                    : 'No routes';
+                
+                return `
+                    <div style="border: 1px solid #ddd; border-radius: 6px; padding: 12px; background: white;">
+                        <div style="display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: start;">
+                            <span style="width: 8px; height: 8px; border-radius: 50%; background: ${statusColor}; margin-top: 4px;"></span>
+                            <div style="display: grid; gap: 6px;">
+                                <div style="display: flex; justify-content: space-between; align-items: start;">
+                                    <div>
+                                        <div style="font-weight: 500; font-size: 14px; margin-bottom: 2px;">${peer.fqdn || peer.ip || 'Unknown'}</div>
+                                        <div style="font-size: 12px; color: #666;">${peer.ip || '-'}</div>
+                                    </div>
+                                    <div style="font-size: 13px; color: ${statusColor}; text-align: right;">
+                                        ${peer.connStatus || 'Unknown'}
+                                    </div>
+                                </div>
+                                
+                                <div style="display: grid; gap: 3px; font-size: 12px; color: #666;">
+                                    <div>Connection: <span style="font-weight: 500; color: ${peer.relayed ? '#f59e0b' : '#10b981'};">${connectionType}</span>${relayInfo}</div>
+                                    <div>Latency: <span style="font-family: monospace;">${latencyDisplay}</span></div>
+                                    <div>Traffic: <span style="font-family: monospace; color: #374151;">${trafficDisplay}</span></div>
+                                    <div>Last Handshake: ${handshakeDisplay}</div>
+                                    <div>Status Update: ${connectionUpdateDisplay}</div>
+                                    ${peer.routeCount > 0 ? `<div style="font-size: 11px;">${routesDisplay}</div>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+        
+        function updateStatusUptime() {
+            if (!statusStartTime) {
+                document.getElementById('statusUptime').textContent = '-';
+                return;
+            }
+            
+            const now = new Date();
+            const diff = now - statusStartTime;
+            const hours = Math.floor(diff / 3600000);
+            const minutes = Math.floor((diff % 3600000) / 60000);
+            const seconds = Math.floor((diff % 60000) / 1000);
+            
+            let uptime = '';
+            if (hours > 0) uptime += hours + 'h ';
+            if (minutes > 0 || hours > 0) uptime += minutes + 'm ';
+            uptime += seconds + 's';
+            
+            document.getElementById('statusUptime').textContent = uptime;
+        }
+        
+        function updateStatusLogsDisplay() {
+            const statusLogsDiv = document.getElementById('statusLogs');
+            if (!statusLogsDiv) return;
+            
+            if (allLogs.length === 0) {
+                statusLogsDiv.innerHTML = '<div style="color: #888;">No logs yet...</div>';
+                return;
+            }
+            
+            // Apply filter if exists
+            const filterValue = document.getElementById('statusLogFilter').value.toLowerCase();
+            let filteredLogs = allLogs;
+            if (filterValue) {
+                filteredLogs = allLogs.filter(log => log.toLowerCase().includes(filterValue));
+            }
+            
+            statusLogsDiv.textContent = filteredLogs.join('\n');
+            
+            // Auto-scroll if enabled
+            if (statusAutoScroll) {
+                statusLogsDiv.scrollTop = statusLogsDiv.scrollHeight;
+            }
+        }
+        
+        function clearStatusLogs() {
+            // Clear the main logs array
+            const statusLogsDiv = document.getElementById('statusLogs');
+            if (statusLogsDiv) {
+                statusLogsDiv.textContent = 'Logs cleared.';
+            }
+            allLogs = [];
+        }
+        
+        function copyStatusLogs() {
+            const statusLogsText = document.getElementById('statusLogs').textContent;
+            navigator.clipboard.writeText(statusLogsText).then(() => {
+                alert('Logs copied to clipboard!');
+            }).catch(err => {
+                console.error('Failed to copy logs:', err);
+                // Fallback for older browsers
+                const textArea = document.createElement('textarea');
+                textArea.value = statusLogsText;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textArea);
+                alert('Logs copied to clipboard!');
+            });
+        }
+        
+        function filterStatusLogs() {
+            updateStatusLogsDisplay();
+        }
+        
+        function toggleStatusAutoScroll() {
+            statusAutoScroll = document.getElementById('statusAutoScroll').checked;
+        }
+        
+        function startStatusAutoRefresh() {
+            stopStatusAutoRefresh(); // Clear any existing interval
+            if (isStatusTabActive && !document.hidden) {
+                statusInterval = setInterval(refreshNetbirdStatus, 5000);
+            }
+        }
+        
+        function stopStatusAutoRefresh() {
+            if (statusInterval) {
+                clearInterval(statusInterval);
+                statusInterval = null;
+            }
+        }
+        
+        // Override console.log to also update status logs
+        const originalConsoleLog = console.log;
+        console.log = function(...args) {
+            originalConsoleLog.apply(console, args);
+            
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = `[${timestamp}] ${args.join(' ')}`;
+            allLogs.push(logEntry);
+            
+            // Update status logs display
+            updateStatusLogsDisplay();
+            
+            // Check for connection status in logs
+            const message = args.join(' ');
+            if (message.includes('NetBird client started successfully')) {
+                updateStatus('connected');
+                netbirdConnected = true;
+            } else if (message.includes('Failed to start') || message.includes('Error:')) {
+                updateStatus('disconnected');
+            }
+        };
+        
+        // Tab switching enhancements for status
+        const originalSwitchTab = window.switchTab;
+        window.switchTab = function(tabName) {
+            originalSwitchTab.call(this, tabName);
+            
+            if (tabName === 'status') {
+                isStatusTabActive = true;
+                // Start auto-refresh for status tab (only when page is visible)
+                refreshNetbirdStatus();
+                startStatusAutoRefresh();
+                
+                // Update uptime every second
+                if (!window.statusUptimeInterval) {
+                    window.statusUptimeInterval = setInterval(updateStatusUptime, 1000);
+                }
+                
+                // Update status logs display
+                updateStatusLogsDisplay();
+            } else {
+                isStatusTabActive = false;
+                // Stop auto-refresh when leaving status tab
+                stopStatusAutoRefresh();
+            }
+        };
+        
+        // iPerf3 Functions
+        let iperf3TestRunning = false;
+        let iperf3Chart = null;
+        let iperf3ChartData = [];
+        let iperf3PeakSpeed = 0;
+        
+        function startIperf3() {
+            console.log('Starting iPerf3 test...');
+            
+            if (!window.createIperf3Client) {
+                console.error('iPerf3 client functions not found in window object');
+                showIperf3Error('iPerf3 client not loaded. Please ensure NetBird is connected.');
+                return;
+            }
+            
+            const host = document.getElementById('iperf3Host').value.trim();
+            const port = parseInt(document.getElementById('iperf3Port').value) || 5201;
+            const duration = parseInt(document.getElementById('iperf3Duration').value) || 10;
+            const direction = document.getElementById('iperf3Direction').value;
+            const protocol = document.getElementById('iperf3Protocol').value;
+            const bandwidth = parseInt(document.getElementById('iperf3Bandwidth').value) * 1000000 || 0; // Convert Mbps to bps
+            
+            if (!host) {
+                showIperf3Error('Please enter a server hostname or IP address.');
+                return;
+            }
+            
+            // Reset UI
+            hideIperf3Error();
+            iperf3ChartData = [];
+            iperf3PeakSpeed = 0;
+            
+            // Update UI state
+            document.getElementById('iperf3StartBtn').style.display = 'none';
+            document.getElementById('iperf3StopBtn').style.display = 'inline-block';
+            document.getElementById('iperf3Status').style.display = 'block';
+            document.getElementById('iperf3Graph').style.display = 'block';
+            document.getElementById('iperf3Results').style.display = 'none';
+            document.getElementById('iperf3StatusText').textContent = 'Connecting to server...';
+            
+            // Initialize chart
+            initIperf3Chart();
+            
+            // Create client
+            window.createIperf3Client();
+            
+            // Set callbacks
+            window.setIperf3Callbacks(
+                // Progress callback
+                function(stats) {
+                    updateIperf3Progress(stats);
+                },
+                // Complete callback
+                function(results) {
+                    iperf3TestComplete(results);
+                },
+                // Error callback
+                function(error) {
+                    showIperf3Error(error);
+                    stopIperf3();
+                }
+            );
+            
+            // Configure test
+            window.configureIperf3Test({
+                duration: duration,
+                reverse: direction === 'reverse',
+                protocol: protocol,
+                bandwidth: bandwidth
+            });
+            
+            // Start test
+            iperf3TestRunning = true;
+            document.getElementById('iperf3StatusText').textContent = `Running ${direction === 'reverse' ? 'download' : 'upload'} test for ${duration} seconds...`;
+            window.startIperf3Test(host, port);
+        }
+        
+        function stopIperf3() {
+            if (window.stopIperf3Test) {
+                window.stopIperf3Test();
+            }
+            
+            iperf3TestRunning = false;
+            document.getElementById('iperf3StartBtn').style.display = 'inline-block';
+            document.getElementById('iperf3StopBtn').style.display = 'none';
+            document.getElementById('iperf3StatusText').textContent = 'Test stopped';
+        }
+        
+        function updateIperf3Progress(stats) {
+            const mbps = stats.mbps || 0;
+            
+            // Update current speed
+            document.getElementById('iperf3CurrentSpeed').textContent = mbps.toFixed(2) + ' Mbps';
+            
+            // Update peak speed
+            if (mbps > iperf3PeakSpeed) {
+                iperf3PeakSpeed = mbps;
+                document.getElementById('iperf3PeakSpeed').textContent = iperf3PeakSpeed.toFixed(2) + ' Mbps';
+            }
+            
+            // Add to chart data
+            iperf3ChartData.push({
+                time: stats.end,
+                mbps: mbps
+            });
+            
+            // Update average
+            if (iperf3ChartData.length > 0) {
+                const avgMbps = iperf3ChartData.reduce((sum, d) => sum + d.mbps, 0) / iperf3ChartData.length;
+                document.getElementById('iperf3AvgSpeed').textContent = avgMbps.toFixed(2) + ' Mbps';
+            }
+            
+            // Update chart
+            updateIperf3Chart();
+        }
+        
+        function iperf3TestComplete(results) {
+            iperf3TestRunning = false;
+            document.getElementById('iperf3StartBtn').style.display = 'inline-block';
+            document.getElementById('iperf3StopBtn').style.display = 'none';
+            document.getElementById('iperf3StatusText').textContent = 'Test completed';
+            document.getElementById('iperf3Results').style.display = 'block';
+            
+            // Format results
+            const direction = document.getElementById('iperf3Direction').value;
+            const isDownload = direction === 'reverse';
+            const totalBytes = isDownload ? results.bytesReceived : results.bytesSent;
+            const totalMB = (totalBytes / 1048576).toFixed(2);
+            const avgMbps = (results.avgMbps || 0).toFixed(2);
+            
+            let resultsHtml = `
+                <div style="line-height: 1.6;">
+                    <strong>Test Summary:</strong><br>
+                    Direction: ${isDownload ? 'Download' : 'Upload'}<br>
+                    Duration: ${results.duration.toFixed(1)} seconds<br>
+                    Data Transferred: ${totalMB} MB<br>
+                    Average Speed: ${avgMbps} Mbps<br>
+                    Peak Speed: ${iperf3PeakSpeed.toFixed(2)} Mbps<br>
+                </div>
+            `;
+            
+            if (results.intervals && results.intervals.length > 0) {
+                resultsHtml += `
+                    <div style="margin-top: 16px;">
+                        <strong>Interval Details:</strong><br>
+                        <div style="max-height: 200px; overflow-y: auto; margin-top: 8px;">
+                `;
+                
+                results.intervals.forEach((interval, i) => {
+                    const intervalMbps = (interval.bits_per_second / 1000000).toFixed(2);
+                    resultsHtml += `
+                        Interval ${i+1}: ${interval.start.toFixed(1)}-${interval.end.toFixed(1)} sec, 
+                        ${(interval.bytes / 1048576).toFixed(2)} MB, 
+                        ${intervalMbps} Mbps<br>
+                    `;
+                });
+                
+                resultsHtml += '</div></div>';
+            }
+            
+            document.getElementById('iperf3ResultsContent').innerHTML = resultsHtml;
+        }
+        
+        function initIperf3Chart() {
+            const canvas = document.getElementById('iperf3Canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Clear canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw grid
+            ctx.strokeStyle = '#e0e0e0';
+            ctx.lineWidth = 1;
+            
+            // Horizontal lines
+            for (let i = 0; i <= 5; i++) {
+                const y = (canvas.height / 5) * i;
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(canvas.width, y);
+                ctx.stroke();
+            }
+            
+            // Vertical lines
+            for (let i = 0; i <= 10; i++) {
+                const x = (canvas.width / 10) * i;
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, canvas.height);
+                ctx.stroke();
+            }
+        }
+        
+        function updateIperf3Chart() {
+            const canvas = document.getElementById('iperf3Canvas');
+            const ctx = canvas.getContext('2d');
+            
+            // Clear and redraw grid
+            initIperf3Chart();
+            
+            if (iperf3ChartData.length < 2) return;
+            
+            // Find max value for scaling
+            const maxMbps = Math.max(...iperf3ChartData.map(d => d.mbps), 10);
+            const maxTime = Math.max(...iperf3ChartData.map(d => d.time), 10);
+            
+            // Draw data line
+            ctx.strokeStyle = '#f68330';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            
+            iperf3ChartData.forEach((data, i) => {
+                const x = (data.time / maxTime) * canvas.width;
+                const y = canvas.height - (data.mbps / maxMbps) * canvas.height;
+                
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            });
+            
+            ctx.stroke();
+            
+            // Draw points
+            ctx.fillStyle = '#f68330';
+            iperf3ChartData.forEach(data => {
+                const x = (data.time / maxTime) * canvas.width;
+                const y = canvas.height - (data.mbps / maxMbps) * canvas.height;
+                
+                ctx.beginPath();
+                ctx.arc(x, y, 3, 0, 2 * Math.PI);
+                ctx.fill();
+            });
+            
+            // Draw labels
+            ctx.fillStyle = '#666';
+            ctx.font = '11px sans-serif';
+            
+            // Y-axis labels (Mbps)
+            for (let i = 0; i <= 5; i++) {
+                const mbps = (maxMbps / 5) * (5 - i);
+                const y = (canvas.height / 5) * i;
+                ctx.fillText(mbps.toFixed(0) + ' Mbps', 5, y + 12);
+            }
+            
+            // X-axis labels (time)
+            for (let i = 0; i <= 5; i++) {
+                const time = (maxTime / 5) * i;
+                const x = (canvas.width / 5) * i;
+                ctx.fillText(time.toFixed(0) + 's', x + 2, canvas.height - 5);
+            }
+        }
+        
+        function showIperf3Error(message) {
+            document.getElementById('iperf3Error').style.display = 'block';
+            document.getElementById('iperf3ErrorText').textContent = message;
+        }
+        
+        function hideIperf3Error() {
+            document.getElementById('iperf3Error').style.display = 'none';
+        }
+    </script>
+</body>
+</html>

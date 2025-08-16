@@ -73,7 +73,14 @@ func (l *Listener) Shutdown(ctx context.Context) error {
 
 func (l *Listener) onAccept(w http.ResponseWriter, r *http.Request) {
 	connRemoteAddr := remoteAddr(r)
-	wsConn, err := websocket.Accept(w, r, nil)
+	
+	// Accept WebSocket connections from any origin for development/WASM support
+	// In production, you may want to restrict this to specific origins
+	acceptOptions := &websocket.AcceptOptions{
+		OriginPatterns: []string{"*"}, // Allow all origins
+	}
+	
+	wsConn, err := websocket.Accept(w, r, acceptOptions)
 	if err != nil {
 		log.Errorf("failed to accept ws connection from %s: %s", connRemoteAddr, err)
 		return
