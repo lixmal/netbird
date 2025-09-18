@@ -131,9 +131,7 @@ archives:
     builds:
       - netbird-wasm
     name_template: "{{ .ProjectName }}_wasm_{{ .Version }}"
-    format: tar.gz
-    files:
-      - none*
+    format: binary
 
 nfpms:
   - maintainer: Netbird <dev@netbird.io>
