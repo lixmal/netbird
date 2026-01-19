@@ -22,10 +22,6 @@ import (
 	nftypes "github.com/netbirdio/netbird/client/internal/netflow/types"
 )
 
-const (
-	udpTimeout = 30 * time.Second
-)
-
 type udpPacketConn struct {
 	conn     *gonet.UDPConn
 	outConn  net.Conn
@@ -39,6 +35,7 @@ type udpForwarder struct {
 	sync.RWMutex
 	logger     *nblog.Logger
 	flowLogger nftypes.FlowLogger
+	timeout    time.Duration
 	conns      map[stack.TransportEndpointID]*udpPacketConn
 	bufPool    sync.Pool
 	ctx        context.Context
@@ -50,11 +47,12 @@ type idleConn struct {
 	conn *udpPacketConn
 }
 
-func newUDPForwarder(mtu uint16, logger *nblog.Logger, flowLogger nftypes.FlowLogger) *udpForwarder {
+func newUDPForwarder(mtu uint16, logger *nblog.Logger, flowLogger nftypes.FlowLogger, timeout time.Duration) *udpForwarder {
 	ctx, cancel := context.WithCancel(context.Background())
 	f := &udpForwarder{
 		logger:     logger,
 		flowLogger: flowLogger,
+		timeout:    timeout,
 		conns:      make(map[stack.TransportEndpointID]*udpPacketConn),
 		ctx:        ctx,
 		cancel:     cancel,
@@ -104,7 +102,7 @@ func (f *udpForwarder) cleanup() {
 
 			f.RLock()
 			for id, conn := range f.conns {
-				if conn.getIdleDuration() > udpTimeout {
+				if conn.getIdleDuration() > f.timeout {
 					idleConns = append(idleConns, idleConn{id, conn})
 				}
 			}
@@ -240,13 +238,13 @@ func (f *Forwarder) proxyUDP(ctx context.Context, pConn *udpPacketConn, id stack
 	// outbound->inbound: copy from pConn.conn to pConn.outConn
 	go func() {
 		defer wg.Done()
-		txBytes, outboundErr = pConn.copy(ctx, pConn.conn, pConn.outConn, &f.udpForwarder.bufPool, "outbound->inbound")
+		txBytes, outboundErr = pConn.copy(ctx, pConn.conn, pConn.outConn, &f.udpForwarder.bufPool, "outbound->inbound", f.udpForwarder.timeout)
 	}()
 
 	// inbound->outbound: copy from pConn.outConn to pConn.conn
 	go func() {
 		defer wg.Done()
-		rxBytes, inboundErr = pConn.copy(ctx, pConn.outConn, pConn.conn, &f.udpForwarder.bufPool, "inbound->outbound")
+		rxBytes, inboundErr = pConn.copy(ctx, pConn.outConn, pConn.conn, &f.udpForwarder.bufPool, "inbound->outbound", f.udpForwarder.timeout)
 	}()
 
 	wg.Wait()
@@ -316,7 +314,7 @@ func (c *udpPacketConn) getIdleDuration() time.Duration {
 }
 
 // copy reads from src and writes to dst.
-func (c *udpPacketConn) copy(ctx context.Context, dst net.Conn, src net.Conn, bufPool *sync.Pool, direction string) (int64, error) {
+func (c *udpPacketConn) copy(ctx context.Context, dst net.Conn, src net.Conn, bufPool *sync.Pool, direction string, timeout time.Duration) (int64, error) {
 	bufp := bufPool.Get().(*[]byte)
 	defer bufPool.Put(bufp)
 	buffer := *bufp
@@ -327,7 +325,7 @@ func (c *udpPacketConn) copy(ctx context.Context, dst net.Conn, src net.Conn, bu
 			return totalBytes, ctx.Err()
 		}
 
-		if err := src.SetDeadline(time.Now().Add(udpTimeout)); err != nil {
+		if err := src.SetDeadline(time.Now().Add(timeout)); err != nil {
 			return totalBytes, fmt.Errorf("set read deadline: %w", err)
 		}
 
@@ -351,6 +349,10 @@ func (c *udpPacketConn) copy(ctx context.Context, dst net.Conn, src net.Conn, bu
 
 func isClosedError(err error) bool {
 	return errors.Is(err, net.ErrClosed) || errors.Is(err, context.Canceled) || errors.Is(err, io.EOF)
+}
+
+func isEOF(err error) bool {
+	return errors.Is(err, io.EOF)
 }
 
 func isTimeout(err error) bool {

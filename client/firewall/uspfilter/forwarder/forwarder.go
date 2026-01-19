@@ -48,7 +48,7 @@ type Forwarder struct {
 	pingSemaphore    chan struct{}
 }
 
-func New(iface common.IFaceMapper, logger *nblog.Logger, flowLogger nftypes.FlowLogger, netstack bool, mtu uint16) (*Forwarder, error) {
+func New(iface common.IFaceMapper, logger *nblog.Logger, flowLogger nftypes.FlowLogger, netstack bool, mtu uint16, udpTimeout time.Duration) (*Forwarder, error) {
 	s := stack.New(stack.Options{
 		NetworkProtocols: []stack.NetworkProtocolFactory{ipv4.NewProtocol},
 		TransportProtocols: []stack.TransportProtocolFactory{
@@ -110,7 +110,7 @@ func New(iface common.IFaceMapper, logger *nblog.Logger, flowLogger nftypes.Flow
 		flowLogger:    flowLogger,
 		stack:         s,
 		endpoint:      endpoint,
-		udpForwarder:  newUDPForwarder(mtu, logger, flowLogger),
+		udpForwarder:  newUDPForwarder(mtu, logger, flowLogger, udpTimeout),
 		ctx:           ctx,
 		cancel:        cancel,
 		netstack:      netstack,

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/gopacket"
 	"github.com/google/gopacket/layers"
@@ -61,6 +62,10 @@ const (
 	// EnvEnableNetstackLocalForwarding is an alias for EnvEnableLocalForwarding.
 	// In netstack mode, it enables forwarding of local traffic to the native stack for all interfaces.
 	EnvEnableNetstackLocalForwarding = "NB_ENABLE_NETSTACK_LOCAL_FORWARDING"
+
+	// EnvUDPConnTrackTimeout sets the timeout for UDP connections in conntrack and forwarder.
+	// Value should be a duration string (e.g., "30s", "1m", "2m30s"). Default is 30s.
+	EnvUDPConnTrackTimeout = "NB_UDP_CONN_TRACK_TIMEOUT"
 )
 
 var errNatNotSupported = errors.New("nat not supported with userspace firewall")
@@ -135,6 +140,8 @@ type Manager struct {
 	mtu             uint16
 	mssClampValue   uint16
 	mssClampEnabled bool
+
+	udpTimeout time.Duration
 }
 
 // decoder for packages
@@ -170,8 +177,7 @@ func CreateWithNativeFirewall(iface common.IFaceMapper, nativeFirewall firewall.
 	return mgr, nil
 }
 
-func parseCreateEnv() (bool, bool, bool) {
-	var disableConntrack, enableLocalForwarding, disableMSSClamping bool
+func parseCreateEnv() (disableConntrack, enableLocalForwarding, disableMSSClamping bool, udpTimeout time.Duration) {
 	var err error
 	if val := os.Getenv(EnvDisableConntrack); val != "" {
 		disableConntrack, err = strconv.ParseBool(val)
@@ -196,12 +202,23 @@ func parseCreateEnv() (bool, bool, bool) {
 			log.Warnf("failed to parse %s: %v", EnvDisableMSSClamping, err)
 		}
 	}
+	if val := os.Getenv(EnvUDPConnTrackTimeout); val != "" {
+		udpTimeout, err = time.ParseDuration(val)
+		if err != nil {
+			log.Warnf("failed to parse %s: %v", EnvUDPConnTrackTimeout, err)
+		} else {
+			log.Infof("using custom UDP connection track timeout: %v", udpTimeout)
+		}
+	}
 
-	return disableConntrack, enableLocalForwarding, disableMSSClamping
+	return disableConntrack, enableLocalForwarding, disableMSSClamping, udpTimeout
 }
 
 func create(iface common.IFaceMapper, nativeFirewall firewall.Manager, disableServerRoutes bool, flowLogger nftypes.FlowLogger, mtu uint16) (*Manager, error) {
-	disableConntrack, enableLocalForwarding, disableMSSClamping := parseCreateEnv()
+	disableConntrack, enableLocalForwarding, disableMSSClamping, udpTimeout := parseCreateEnv()
+	if udpTimeout == 0 {
+		udpTimeout = conntrack.DefaultUDPTimeout
+	}
 
 	m := &Manager{
 		decoders: sync.Pool{
@@ -233,6 +250,7 @@ func create(iface common.IFaceMapper, nativeFirewall firewall.Manager, disableSe
 		portDNATRules:       []portDNATRule{},
 		netstackServices:    make(map[serviceKey]struct{}),
 		mtu:                 mtu,
+		udpTimeout:          udpTimeout,
 	}
 	m.routingEnabled.Store(false)
 
@@ -246,7 +264,7 @@ func create(iface common.IFaceMapper, nativeFirewall firewall.Manager, disableSe
 	if disableConntrack {
 		log.Info("conntrack is disabled")
 	} else {
-		m.udpTracker = conntrack.NewUDPTracker(conntrack.DefaultUDPTimeout, m.logger, flowLogger)
+		m.udpTracker = conntrack.NewUDPTracker(udpTimeout, m.logger, flowLogger)
 		m.icmpTracker = conntrack.NewICMPTracker(conntrack.DefaultICMPTimeout, m.logger, flowLogger)
 		m.tcpTracker = conntrack.NewTCPTracker(conntrack.DefaultTCPTimeout, m.logger, flowLogger)
 	}
@@ -354,7 +372,7 @@ func (m *Manager) initForwarder() error {
 		return errors.New("forwarding not supported")
 	}
 
-	forwarder, err := forwarder.New(m.wgIface, m.logger, m.flowLogger, m.netstack, m.mtu)
+	forwarder, err := forwarder.New(m.wgIface, m.logger, m.flowLogger, m.netstack, m.mtu, m.udpTimeout)
 	if err != nil {
 		m.routingEnabled.Store(false)
 		return fmt.Errorf("create forwarder: %w", err)
