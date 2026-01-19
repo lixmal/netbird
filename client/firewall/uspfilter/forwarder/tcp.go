@@ -1,7 +1,6 @@
 package forwarder
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -67,25 +66,14 @@ func (f *Forwarder) handleTCP(r *tcp.ForwarderRequest) {
 }
 
 func (f *Forwarder) proxyTCP(id stack.TransportEndpointID, inConn *gonet.TCPConn, outConn net.Conn, ep tcpip.Endpoint, flowID uuid.UUID) {
-
-	ctx, cancel := context.WithCancel(f.ctx)
-	defer cancel()
-
-	go func() {
-		<-ctx.Done()
-		// Close connections and endpoint.
-		if err := inConn.Close(); err != nil && !isClosedError(err) {
-			f.logger.Debug1("forwarder: inConn close error: %v", err)
-		}
-		if err := outConn.Close(); err != nil && !isClosedError(err) {
-			f.logger.Debug1("forwarder: outConn close error: %v", err)
-		}
-
-		ep.Close()
-	}()
-
 	var wg sync.WaitGroup
 	wg.Add(2)
+
+	// For half-close support on the outbound connection
+	outConnTCP, outConnHasHalfClose := outConn.(interface {
+		CloseRead() error
+		CloseWrite() error
+	})
 
 	var (
 		bytesFromInToOut int64 // bytes from client to server (tx for client)
@@ -94,20 +82,66 @@ func (f *Forwarder) proxyTCP(id stack.TransportEndpointID, inConn *gonet.TCPConn
 		errOutToIn       error
 	)
 
+	// closeConns forcefully closes both connections to unblock the other goroutine
+	closeConns := func() {
+		inConn.Close()
+		outConn.Close()
+	}
+
+	// client (inConn) -> server (outConn)
 	go func() {
+		defer wg.Done()
 		bytesFromInToOut, errInToOut = io.Copy(outConn, inConn)
-		cancel()
-		wg.Done()
+
+		// On error (not EOF), close everything to unblock the other direction
+		if errInToOut != nil && !isEOF(errInToOut) {
+			closeConns()
+			return
+		}
+
+		// Half-close: signal EOF to server, stop reading from client
+		if outConnHasHalfClose {
+			if err := outConnTCP.CloseWrite(); err != nil && !isClosedError(err) {
+				f.logger.Debug1("forwarder: outConn CloseWrite error: %v", err)
+			}
+		}
+		if err := inConn.CloseRead(); err != nil && !isClosedError(err) {
+			f.logger.Debug1("forwarder: inConn CloseRead error: %v", err)
+		}
 	}()
 
+	// server (outConn) -> client (inConn)
 	go func() {
-
+		defer wg.Done()
 		bytesFromOutToIn, errOutToIn = io.Copy(inConn, outConn)
-		cancel()
-		wg.Done()
+
+		// On error (not EOF), close everything to unblock the other direction
+		if errOutToIn != nil && !isEOF(errOutToIn) {
+			closeConns()
+			return
+		}
+
+		// Half-close: signal EOF to client, stop reading from server
+		if err := inConn.CloseWrite(); err != nil && !isClosedError(err) {
+			f.logger.Debug1("forwarder: inConn CloseWrite error: %v", err)
+		}
+		if outConnHasHalfClose {
+			if err := outConnTCP.CloseRead(); err != nil && !isClosedError(err) {
+				f.logger.Debug1("forwarder: outConn CloseRead error: %v", err)
+			}
+		}
 	}()
 
 	wg.Wait()
+
+	// Final cleanup - close any remaining resources
+	if err := inConn.Close(); err != nil && !isClosedError(err) {
+		f.logger.Debug1("forwarder: inConn close error: %v", err)
+	}
+	if err := outConn.Close(); err != nil && !isClosedError(err) {
+		f.logger.Debug1("forwarder: outConn close error: %v", err)
+	}
+	ep.Close()
 
 	if errInToOut != nil {
 		if !isClosedError(errInToOut) {

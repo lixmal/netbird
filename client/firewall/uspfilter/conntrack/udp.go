@@ -14,7 +14,7 @@ import (
 
 const (
 	// DefaultUDPTimeout is the default timeout for UDP connections
-	DefaultUDPTimeout = 30 * time.Second
+	DefaultUDPTimeout = 60 * time.Second
 	// UDPCleanupInterval is how often we check for stale connections
 	UDPCleanupInterval = 15 * time.Second
 )
