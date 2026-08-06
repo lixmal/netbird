@@ -130,21 +130,34 @@ func PrimeScreenCapturePermission() {
 	}
 }
 
-// notifyScreenRecordingMissing nudges the user once per agent process to
-// approve Screen Recording. The capturer init retries on backoff when the
-// grant is missing; without the sync.Once we would reopen System Settings
-// every tick and flood the daemon log with the same warning.
-var screenRecordingNotifyOnce sync.Once
+// screenRecordingAsks counts how often we have nudged about Screen Recording in
+// this process, so the first failure prompts and a later one escalates to
+// Settings. Capturer init retries on a backoff, so an unbounded nudge would
+// reopen Settings on every tick.
+var screenRecordingAsks atomic.Int32
 
+// notifyScreenRecordingMissing asks for Screen Recording, escalating only when
+// asking cannot work.
+//
+// The native request already shows a dialog with an "Open System Settings"
+// button, so opening the pane at the same time leaves two things on screen for
+// one decision. It also only prompts once per process and never once a decision
+// exists, which is why a second failure drives Settings directly: by then the
+// dialog either went unanswered or was never shown.
 func notifyScreenRecordingMissing() {
-	screenRecordingNotifyOnce.Do(func() {
+	switch screenRecordingAsks.Add(1) {
+	case 1:
 		if cgRequestScreenCaptureAccess != nil {
 			cgRequestScreenCaptureAccess()
+			log.Warn("Screen Recording permission not granted; approve the prompt to share the screen")
+			return
 		}
+		fallthrough
+	case 2:
 		openPrivacyPane("Privacy_ScreenCapture")
-		log.Warn("Screen Recording permission not granted. " +
-			"Opened System Settings > Privacy & Security > Screen Recording; enable netbird and restart.")
-	})
+		log.Warn("Screen Recording permission still not granted. " +
+			"Opened System Settings > Privacy & Security > Screen Recording; enable netbird there.")
+	}
 }
 
 // NewCGCapturer creates a screen capturer for the main display.
@@ -490,6 +503,24 @@ type MacPoller struct {
 	initFails        int
 	initBackoffUntil time.Time
 	closed           bool
+
+	// giveUp is called when capture can no longer be expected to start in this
+	// process. Only the per-user agent sets it, where exiting is cheap and the
+	// service respawns on the next connection; the daemon leaves it nil.
+	giveUp func()
+}
+
+// macCaptureGiveUpAfter is how many failed init attempts count as "this process
+// will never capture". The backoff means a handful of attempts already spans
+// tens of seconds, which is long enough for a grant to have been made.
+const macCaptureGiveUpAfter = 5
+
+// OnCaptureUnavailable registers a callback for when capture cannot start in
+// this process, so the caller can restart to pick up a permission change.
+func (p *MacPoller) OnCaptureUnavailable(fn func()) {
+	p.mu.Lock()
+	p.giveUp = fn
+	p.mu.Unlock()
 }
 
 // macInitRetryBackoffFor returns the delay we wait between init attempts
@@ -628,6 +659,16 @@ func (p *MacPoller) ensureCapturerLocked() error {
 	if err != nil {
 		p.initFails++
 		p.initBackoffUntil = time.Now().Add(macInitRetryBackoffFor(p.initFails))
+		// TCC prompts are once-per-process and a Screen Recording grant only
+		// takes effect in a process started after it, so an agent that has never
+		// captured cannot recover here however long it retries. Ask for shutdown
+		// instead: the next connection spawns a fresh agent, which prompts again
+		// and picks up a grant made in the meantime.
+		if p.initFails >= macCaptureGiveUpAfter && !ScreenCaptureWorking() && p.giveUp != nil {
+			log.Warnf("macOS capturer never started after %d attempts; restarting the agent so the "+
+				"permission can be asked again", p.initFails)
+			p.giveUp()
+		}
 		if p.initFails == 1 || p.initFails%10 == 0 {
 			log.Warnf("macOS capturer: %v (attempt %d)", err, p.initFails)
 		} else {

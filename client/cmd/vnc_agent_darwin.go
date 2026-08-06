@@ -5,6 +5,8 @@ package cmd
 import (
 	"fmt"
 
+	log "github.com/sirupsen/logrus"
+
 	vncserver "github.com/netbirdio/netbird/client/vnc/server"
 )
 
@@ -17,6 +19,14 @@ func newAgentResources() (vncserver.ScreenCapturer, vncserver.InputInjector, err
 	vncserver.PrimeScreenCapturePermission()
 
 	capturer := vncserver.NewMacPoller()
+	// A Screen Recording grant only applies to a process started after it, and
+	// the prompt is once per process, so an agent that never manages to capture
+	// is a dead end. Exit and let the service spawn a fresh one on the next
+	// connection, which prompts again and sees any grant made since.
+	capturer.OnCaptureUnavailable(func() {
+		log.Warn("vnc-agent exiting so the next connection can ask for Screen Recording again")
+		vncAgentGiveUp()
+	})
 	injector, err := vncserver.NewMacInputInjector()
 	if err != nil {
 		return nil, nil, fmt.Errorf("macOS input injector: %w", err)

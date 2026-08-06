@@ -302,9 +302,11 @@ type MacInputInjector struct {
 	// field on each posted event, not from event timing.
 	clickCount [5]int64
 	clickAt    [5]time.Time
-	// axAsked is set once the Accessibility request has been made, so the
-	// per-event check is one atomic load.
+	// axAsked is set once the Accessibility request has been made and axDone
+	// once there is nothing left to ask, so the per-event check on the hot path
+	// is a single atomic load.
 	axAsked atomic.Bool
+	axDone  atomic.Bool
 }
 
 // NewMacInputInjector creates a macOS input injector.
@@ -347,7 +349,7 @@ func logAccessibilityStatus() {
 // first input that is actually delivered. Injection happens per event, so the
 // common path has to be a single atomic load.
 func (m *MacInputInjector) ensureAccessibility() {
-	if m.axAsked.Load() {
+	if m.axDone.Load() {
 		return
 	}
 	m.askAccessibility()
@@ -363,15 +365,38 @@ func (m *MacInputInjector) askAccessibility() {
 	if !ScreenCaptureWorking() {
 		return
 	}
-	if !m.axAsked.CompareAndSwap(false, true) {
+
+	// First input: let macOS ask. Its dialog carries an "Open System Settings"
+	// button, so opening the pane as well would put two things on screen for one
+	// decision.
+	if m.axAsked.CompareAndSwap(false, true) {
+		if axIsProcessTrustedWithOptions != nil {
+			if axProcessIsTrusted() {
+				m.axDone.Store(true)
+				return
+			}
+			log.Warn("Accessibility permission not granted; approve the prompt to allow remote input")
+			return
+		}
+		// No prompting variant on this host: Settings is the only route.
+		openPrivacyPane("Privacy_Accessibility")
+		log.Warn("Accessibility permission not granted. Opened System Settings > " +
+			"Privacy & Security > Accessibility; enable netbird there.")
+		m.axDone.Store(true)
 		return
 	}
-	if axProcessIsTrusted() {
+
+	// Input keeps arriving after the prompt. Either it was dismissed or macOS
+	// never showed it because a decision already exists, and it will not appear
+	// again in this process, so point at Settings once and stop nagging.
+	if axIsProcessTrusted != nil && axIsProcessTrusted() {
+		m.axDone.Store(true)
 		return
 	}
-	log.Warn("Accessibility permission not granted. Input injection will not work. " +
-		"Approve the prompt or grant in System Settings > Privacy & Security > Accessibility.")
 	openPrivacyPane("Privacy_Accessibility")
+	log.Warn("Accessibility permission still not granted. Opened System Settings > " +
+		"Privacy & Security > Accessibility; enable netbird there.")
+	m.axDone.Store(true)
 }
 
 // axProcessIsTrusted asks macOS whether netbird has Accessibility access,
