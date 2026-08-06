@@ -114,52 +114,94 @@ type CGCapturer struct {
 	cursor     *cgCursor
 }
 
-// PrimeScreenCapturePermission triggers the macOS Screen Recording
-// permission prompt without creating a full capturer. The platform wiring
-// calls this at VNC-server enable time so the user sees the prompt the
-// moment they turn the feature on. CGRequestScreenCaptureAccess is a
-// no-op when the grant already exists, so calling it on every enable is
-// cheap and safe.
+// Screen Recording state for this process. TCC decisions are per process and a
+// grant only reaches a process that started after it was made, so all of this is
+// process-wide rather than per capturer.
+var (
+	// screenRecordingAsks counts how often the question has been put to the user
+	// here. The native call only shows its dialog on the first ask.
+	screenRecordingAsks atomic.Int32
+	// screenRecordingGranted holds the last answer TCC gave. It can be true
+	// while capture still fails, which is precisely the case a restart fixes.
+	screenRecordingGranted atomic.Bool
+	// screenRecordingResolved is set once the question no longer needs the
+	// screen: a capture succeeded, or the user has been asked. The input side
+	// waits for it before asking for Accessibility, since macOS shows one
+	// permission pane at a time and losing the Screen Recording one is the worse
+	// outcome: without it there is no picture.
+	screenRecordingResolved atomic.Bool
+	// screenRecordingPaneShown keeps the Settings escalation to once per process.
+	screenRecordingPaneShown atomic.Bool
+	// captureRestartPending is set once the process has been asked to exit, so
+	// nothing else opens a dialog that the exit would tear down.
+	captureRestartPending atomic.Bool
+)
+
+// PrimeScreenCapturePermission asks for Screen Recording without creating a full
+// capturer, so the request comes from the agent's startup rather than from the
+// middle of a session. The native call is a no-op once a decision exists, so
+// calling it on every agent start is cheap and safe.
 func PrimeScreenCapturePermission() {
 	initDarwinCapture()
 	if !darwinCaptureReady {
 		return
 	}
-	if cgRequestScreenCaptureAccess != nil {
-		cgRequestScreenCaptureAccess()
+	requestScreenRecording()
+}
+
+// requestScreenRecording puts the Screen Recording question to the user and
+// reports what TCC answered, plus whether this was the first ask in this
+// process. The native call shows its dialog on the first ask only and returns
+// the standing decision on every later one.
+func requestScreenRecording() (granted, first bool) {
+	if cgRequestScreenCaptureAccess == nil {
+		return false, false
+	}
+	granted = cgRequestScreenCaptureAccess()
+	first = screenRecordingAsks.Add(1) == 1
+	screenRecordingGranted.Store(granted)
+	screenRecordingResolved.Store(true)
+	return granted, first
+}
+
+// notifyScreenRecordingMissing asks for Screen Recording after a capture failed.
+//
+// The native dialog carries its own "Open System Settings" button, so opening the
+// pane alongside it would leave two things on screen for one decision. The pane
+// is for the cases where asking cannot help: a host with no prompting symbol
+// here, and an unanswered dialog in showScreenRecordingPane.
+func notifyScreenRecordingMissing() {
+	if cgRequestScreenCaptureAccess == nil {
+		showScreenRecordingPane()
+		screenRecordingResolved.Store(true)
+		return
+	}
+	granted, first := requestScreenRecording()
+	switch {
+	case granted:
+		// The grant exists but arrived after this process started, so it cannot
+		// capture with it. Restarting is the only way out, see maybeGiveUpLocked.
+		log.Info("Screen Recording is granted but not in effect for this process")
+	case first:
+		log.Warn("Screen Recording permission not granted; approve the prompt to share the screen")
+	default:
+		log.Debug("Screen Recording permission still not granted")
 	}
 }
 
-// notifyScreenRecordingMissing nudges the user once per agent process to
-// approve Screen Recording. The capturer init retries on backoff when the
-// grant is missing; without the sync.Once we would reopen System Settings
-// every tick and flood the daemon log with the same warning.
-var screenRecordingNotifyOnce sync.Once
-
-func notifyScreenRecordingMissing() {
-	screenRecordingNotifyOnce.Do(func() {
-		if cgRequestScreenCaptureAccess != nil {
-			cgRequestScreenCaptureAccess()
-		}
-		openPrivacyPane("Privacy_ScreenCapture")
-		log.Warn("Screen Recording permission not granted. " +
-			"Opened System Settings > Privacy & Security > Screen Recording; enable netbird and restart.")
-	})
+// showScreenRecordingPane opens the Screen Recording pane of System Settings
+// once per process. Used when the dialog cannot appear or has gone unanswered
+// long enough that it is no longer competing for the user's attention.
+func showScreenRecordingPane() {
+	if !screenRecordingPaneShown.CompareAndSwap(false, true) {
+		return
+	}
+	openPrivacyPane("Privacy_ScreenCapture")
+	log.Warn("Screen Recording permission not granted. " +
+		"Opened System Settings > Privacy & Security > Screen Recording; enable netbird there.")
 }
 
 // NewCGCapturer creates a screen capturer for the main display.
-// screenCaptureWorking records that a real capture succeeded, which is the only
-// trustworthy signal that Screen Recording is granted: CGPreflight lies on
-// Sequoia. The input side waits for this before asking for Accessibility, so the
-// two permission panes never compete (macOS shows one at a time, and losing the
-// Screen Recording pane is the worse outcome: without it there is no picture).
-var screenCaptureWorking atomic.Bool
-
-// ScreenCaptureWorking reports whether a capture has succeeded in this process.
-func ScreenCaptureWorking() bool {
-	return screenCaptureWorking.Load()
-}
-
 func NewCGCapturer() (*CGCapturer, error) {
 	initDarwinCapture()
 	if !darwinCaptureReady {
@@ -174,7 +216,9 @@ func NewCGCapturer() (*CGCapturer, error) {
 		notifyScreenRecordingMissing()
 		return nil, fmt.Errorf("probe capture: %w", err)
 	}
-	screenCaptureWorking.Store(true)
+	// A frame is the only trustworthy grant signal: CGPreflight lies on Sequoia.
+	screenRecordingGranted.Store(true)
+	screenRecordingResolved.Store(true)
 	nativeW := img.Rect.Dx()
 	nativeH := img.Rect.Dy()
 	c.hasHash = false
@@ -490,6 +534,40 @@ type MacPoller struct {
 	initFails        int
 	initBackoffUntil time.Time
 	closed           bool
+
+	// captured records that a frame was produced since the current clients
+	// connected. Reset per connection rather than latched for the process
+	// lifetime, so a permission revoked between sessions is noticed.
+	captured bool
+	// firstFailAt is when the current run of init failures started.
+	firstFailAt time.Time
+	// gaveUp keeps the restart request to one per process.
+	gaveUp bool
+
+	// giveUp is called when capture can no longer be expected to start in this
+	// process. Only the per-user agent sets it, where exiting is cheap and the
+	// service respawns on the next connection; the daemon leaves it nil.
+	giveUp func()
+}
+
+const (
+	// macCaptureGiveUpWindow is how long capture may keep failing to start before
+	// this process counts as unable to capture at all. Long enough that a user
+	// still deciding on the prompt the first failure raised is not cut off by the
+	// restart.
+	macCaptureGiveUpWindow = 30 * time.Second
+	// macCaptureGrantedRetries is how many failures a process with the grant in
+	// hand takes before restarting. Enough to tell a stale grant, which only a
+	// restart fixes, from a display that momentarily had no frame to give.
+	macCaptureGrantedRetries = 2
+)
+
+// OnCaptureUnavailable registers a callback for when capture cannot start in
+// this process, so the caller can restart to pick up a permission change.
+func (p *MacPoller) OnCaptureUnavailable(fn func()) {
+	p.mu.Lock()
+	p.giveUp = fn
+	p.mu.Unlock()
 }
 
 // macInitRetryBackoffFor returns the delay we wait between init attempts
@@ -523,6 +601,13 @@ func (p *MacPoller) Wake() {
 func (p *MacPoller) ClientConnect() {
 	if p.clients.Add(1) == 1 {
 		p.mu.Lock()
+		// Start the permission bookkeeping over for this session: whether capture
+		// works has to be judged against the grants as they are now, not against
+		// a frame produced before the user changed them.
+		p.captured = false
+		p.initFails = 0
+		p.firstFailAt = time.Time{}
+		p.initBackoffUntil = time.Time{}
 		_ = p.ensureCapturerLocked()
 		p.mu.Unlock()
 	}
@@ -628,6 +713,10 @@ func (p *MacPoller) ensureCapturerLocked() error {
 	if err != nil {
 		p.initFails++
 		p.initBackoffUntil = time.Now().Add(macInitRetryBackoffFor(p.initFails))
+		if p.firstFailAt.IsZero() {
+			p.firstFailAt = time.Now()
+		}
+		p.maybeGiveUpLocked()
 		if p.initFails == 1 || p.initFails%10 == 0 {
 			log.Warnf("macOS capturer: %v (attempt %d)", err, p.initFails)
 		} else {
@@ -636,9 +725,46 @@ func (p *MacPoller) ensureCapturerLocked() error {
 		return err
 	}
 	p.initFails = 0
+	p.firstFailAt = time.Time{}
+	p.captured = true
 	p.capturer = c
 	p.w, p.h = c.Width(), c.Height()
 	return nil
+}
+
+// maybeGiveUpLocked asks the process to restart when capture cannot be made to
+// work in it. TCC prompts once per process and a Screen Recording grant only
+// reaches a process that started after it, so retrying in place cannot recover
+// either a grant made just now or one the user has taken away. Only the agent
+// registers the hook; the daemon has nothing to gain from exiting.
+// Caller must hold p.mu.
+func (p *MacPoller) maybeGiveUpLocked() {
+	if p.giveUp == nil || p.gaveUp || p.captured {
+		return
+	}
+	if screenRecordingGranted.Load() && p.initFails >= macCaptureGrantedRetries {
+		log.Info("Screen Recording is granted but capture does not work in this process; restarting to use it")
+		p.restartLocked()
+		return
+	}
+	if time.Since(p.firstFailAt) < macCaptureGiveUpWindow {
+		return
+	}
+	// Nothing was granted and the dialog has been on screen long enough to count
+	// as unanswered, so hand the user Settings before the process goes away.
+	showScreenRecordingPane()
+	log.Warnf("macOS capturer has not started for %s; restarting so the permission can be asked again",
+		macCaptureGiveUpWindow)
+	p.restartLocked()
+}
+
+// restartLocked publishes that the process is on its way out before triggering
+// it, so nothing opens a permission dialog that the exit would tear down.
+// Caller must hold p.mu.
+func (p *MacPoller) restartLocked() {
+	p.gaveUp = true
+	captureRestartPending.Store(true)
+	p.giveUp()
 }
 
 var _ ScreenCapturer = (*MacPoller)(nil)

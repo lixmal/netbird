@@ -3,10 +3,12 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"net/netip"
 	"os"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -17,6 +19,11 @@ import (
 var (
 	vncAgentSocket    string
 	vncAgentTargetUID uint32
+
+	// vncAgentStop cancels the agent's own context so a platform hook can end
+	// the process through the normal shutdown path rather than os.Exit.
+	vncAgentStopMu sync.Mutex
+	vncAgentStop   context.CancelFunc
 )
 
 func init() {
@@ -74,6 +81,12 @@ var vncAgentCmd = &cobra.Command{
 			log.Debugf("chmod %s: %v", vncAgentSocket, err)
 		}
 
+		ctx, stop := context.WithCancel(cmd.Context())
+		defer stop()
+		vncAgentStopMu.Lock()
+		vncAgentStop = stop
+		vncAgentStopMu.Unlock()
+
 		capturer, injector, err := newAgentResources()
 		if err != nil {
 			_ = ln.Close()
@@ -87,14 +100,25 @@ var vncAgentCmd = &cobra.Command{
 			Listener:      ln,
 		})
 
-		if err := srv.Start(cmd.Context(), netip.AddrPort{}, netip.Prefix{}); err != nil {
+		if err := srv.Start(ctx, netip.AddrPort{}, netip.Prefix{}); err != nil {
 			return fmt.Errorf("start vnc server: %w", err)
 		}
 		log.Infof("vnc-agent listening on %s, ready", vncAgentSocket)
 
-		<-cmd.Context().Done()
+		<-ctx.Done()
 		log.Info("vnc-agent context cancelled, shutting down")
 		return srv.Stop()
 	},
 	SilenceUsage: true,
+}
+
+// vncAgentGiveUp ends the agent through its own context, so the server stops
+// cleanly and the service spawns a replacement on the next connection.
+func vncAgentGiveUp() {
+	vncAgentStopMu.Lock()
+	stop := vncAgentStop
+	vncAgentStopMu.Unlock()
+	if stop != nil {
+		stop()
+	}
 }
