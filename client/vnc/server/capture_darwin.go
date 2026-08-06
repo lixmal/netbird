@@ -37,9 +37,13 @@ var (
 	cfDataGetBytePtr             func(uintptr) uintptr
 	cfRelease                    func(uintptr)
 	cgRequestScreenCaptureAccess func() bool
-	cgEventCreate                func(uintptr) uintptr
-	cgEventGetLocation           func(uintptr) cgPoint
-	darwinCaptureReady           bool
+	// cgPreflightScreenCaptureAccess reads the decision without prompting. Kept
+	// for the diagnostic in RequestScreenRecording until it is known whether it
+	// can be trusted in the agent.
+	cgPreflightScreenCaptureAccess func() bool
+	cgEventCreate                  func(uintptr) uintptr
+	cgEventGetLocation             func(uintptr) cgPoint
+	darwinCaptureReady             bool
 )
 
 // cgPoint mirrors CoreGraphics CGPoint: two doubles, 16 bytes, returned
@@ -77,13 +81,15 @@ func initDarwinCapture() {
 		purego.RegisterLibFunc(&cfDataGetBytePtr, cf, "CFDataGetBytePtr")
 		purego.RegisterLibFunc(&cfRelease, cf, "CFRelease")
 
-		// CGRequestScreenCaptureAccess (macOS 11+) prompts on the first call in a
-		// process, blocks until the user answers, and reports the standing
-		// decision on every later call. Its Preflight companion is unreliable on
-		// Sequoia (returns false even when access is granted), so the request is
-		// what we read the state from, see RequestScreenRecording.
+		// CGRequestScreenCaptureAccess (macOS 11+) raises its dialog on the first
+		// call in a process and reports the decision as it stands, without waiting
+		// for the user. Its Preflight companion never prompts but has a reputation
+		// for lying on Sequoia, see RequestScreenRecording.
 		if sym, err := purego.Dlsym(cg, "CGRequestScreenCaptureAccess"); err == nil {
 			purego.RegisterFunc(&cgRequestScreenCaptureAccess, sym)
+		}
+		if sym, err := purego.Dlsym(cg, "CGPreflightScreenCaptureAccess"); err == nil {
+			purego.RegisterFunc(&cgPreflightScreenCaptureAccess, sym)
 		}
 		// CGEventCreate / CGEventGetLocation feed the cursor position used
 		// by remote-cursor compositing. Optional; absence reports as a
@@ -126,27 +132,38 @@ type CGCapturer struct {
 // window missing, so a failing capture is not how a missing grant shows up, and a
 // successful one is no proof of having it.
 //
-// The call blocks while the dialog is up and returns the decision the user made.
-// A grant takes effect immediately, so a session that starts with the dialog goes
-// on to show the real screen without needing a new process.
+// The call returns the decision as it stands and raises its dialog in the
+// background, so the answer it reports is the state before the user gets a say. A
+// grant takes effect immediately, so the session the dialog interrupted goes on to
+// show the real screen without needing a new process.
+//
+// It deliberately does not open System Settings when the answer is no. The dialog
+// is still on screen at that point, and putting the pane up alongside it leaves
+// two things competing for one decision. A dismissed dialog needs no fallback
+// either: the agent is recycled per connection, so the next one asks again.
 func RequestScreenRecording() bool {
 	initDarwinCapture()
 	if !darwinCaptureReady || cgRequestScreenCaptureAccess == nil {
-		// Nothing to ask with. Point at Settings so there is still a way in.
+		// Nothing to ask with, so Settings is the only route left.
 		openPrivacyPane("Privacy_ScreenCapture")
 		log.Warn("cannot ask for Screen Recording permission on this macOS. " +
 			"Opened System Settings > Privacy & Security > Screen Recording; enable netbird there.")
 		return false
 	}
-	if cgRequestScreenCaptureAccess() {
-		return true
+	// Read the silent check first: the request below can change what it reports.
+	// Logged to settle whether it can be trusted here, in the console-user agent,
+	// having proven unreliable in the daemon where the request is dropped outright.
+	preflight := "unavailable"
+	if cgPreflightScreenCaptureAccess != nil {
+		preflight = strconv.FormatBool(cgPreflightScreenCaptureAccess())
 	}
-	// The dialog has been answered and dismissed by now, so Settings is the only
-	// remaining route and does not compete with it.
-	openPrivacyPane("Privacy_ScreenCapture")
-	log.Warn("Screen Recording permission not granted, the screen will show no windows. " +
-		"Opened System Settings > Privacy & Security > Screen Recording; enable netbird there.")
-	return false
+
+	granted := cgRequestScreenCaptureAccess()
+	log.Infof("Screen Recording: granted=%v (preflight reported %s)", granted, preflight)
+	if !granted {
+		log.Warn("Screen Recording permission not granted, the screen shows no windows until it is")
+	}
+	return granted
 }
 
 // NewCGCapturer creates a screen capturer for the main display.

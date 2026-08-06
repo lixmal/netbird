@@ -302,15 +302,14 @@ type MacInputInjector struct {
 	// field on each posted event, not from event timing.
 	clickCount [5]int64
 	clickAt    [5]time.Time
-	// axAsked is set once the Accessibility request has been made and axDone
-	// once there is nothing left to ask, so the per-event check on the hot path
-	// is a single atomic load.
-	axAsked atomic.Bool
-	axDone  atomic.Bool
-	// axAskedAt is when the request was made, and axNextCheck when the trust
-	// state may be read again. Input arrives continuously, so the cold path has
-	// to be paced by time rather than by event count.
-	axAskedAt   atomic.Int64
+	// axDone is set once there is nothing left to ask, so the per-event check on
+	// the hot path is a single atomic load.
+	axDone atomic.Bool
+	// axAsks counts the asks made so far, axNextAsk is when the next one may go
+	// out and axNextCheck when the trust state may be read again. Input arrives
+	// continuously, so the cold path is paced by time rather than by event count.
+	axAsks      atomic.Int32
+	axNextAsk   atomic.Int64
 	axNextCheck atomic.Int64
 }
 
@@ -350,9 +349,9 @@ func logAccessibilityStatus() {
 	}
 }
 
-// ensureAccessibility asks for Accessibility at most once per process, on the
-// first input that is actually delivered. Injection happens per event, so the
-// common path has to be a single atomic load.
+// ensureAccessibility asks for Accessibility while input is being delivered and
+// the permission is missing. Injection happens per event, so the common path has
+// to be a single atomic load.
 func (m *MacInputInjector) ensureAccessibility() {
 	if m.axDone.Load() {
 		return
@@ -360,33 +359,43 @@ func (m *MacInputInjector) ensureAccessibility() {
 	m.askAccessibility()
 }
 
-// axEscalateAfter is how long the Accessibility dialog is left alone before we
-// point at System Settings instead. axRecheckEvery paces the trust lookups that
-// happen until then.
 const (
-	axEscalateAfter = 30 * time.Second
-	axRecheckEvery  = 2 * time.Second
+	// axRetryEvery is how long we wait before putting the question back on
+	// screen. One ask is not enough: the dialogs are asynchronous, macOS shows
+	// one at a time, and an ask made while the Screen Recording dialog is up can
+	// be dropped with no trace and no error to observe.
+	axRetryEvery = 10 * time.Second
+	// axMaxAsks bounds the retries before falling back to System Settings, so a
+	// user who keeps dismissing the dialog is pointed at the toggle instead.
+	axMaxAsks = 3
+	// axRecheckEvery paces the trust lookups on the cold path.
+	axRecheckEvery = 2 * time.Second
 )
 
 // askAccessibility is the cold path of ensureAccessibility.
 //
-// Asking here rather than at startup keeps the two permission dialogs apart:
-// macOS shows one at a time, and the agent puts the Screen Recording question
-// first, before this injector exists.
+// Unlike Screen Recording, the state here is knowable: AXIsProcessTrusted reads
+// it without prompting, so retrying costs nothing once the grant lands and the
+// hot path goes quiet again for the rest of the session.
 func (m *MacInputInjector) askAccessibility() {
-	// First input: let macOS ask. Its dialog carries an "Open System Settings"
-	// button, so opening the pane as well would put two things on screen for one
-	// decision.
-	if m.axAsked.CompareAndSwap(false, true) {
-		m.axAskedAt.Store(time.Now().UnixNano())
-		if axIsProcessTrustedWithOptions == nil {
-			// No prompting variant on this host: Settings is the only route.
-			openPrivacyPane("Privacy_Accessibility")
-			log.Warn("Accessibility permission not granted. Opened System Settings > " +
-				"Privacy & Security > Accessibility; enable netbird there.")
-			m.axDone.Store(true)
-			return
-		}
+	now := time.Now()
+	if now.UnixNano() < m.axNextCheck.Load() {
+		return
+	}
+	m.axNextCheck.Store(now.Add(axRecheckEvery).UnixNano())
+
+	if axProcessTrusted() {
+		m.axDone.Store(true)
+		return
+	}
+	if now.UnixNano() < m.axNextAsk.Load() {
+		return
+	}
+	m.axNextAsk.Store(now.Add(axRetryEvery).UnixNano())
+
+	// The native dialog carries its own "Open System Settings" button, so the
+	// pane is held back until asking has demonstrably not worked.
+	if m.axAsks.Add(1) <= axMaxAsks && axIsProcessTrustedWithOptions != nil {
 		if axProcessIsTrusted() {
 			m.axDone.Store(true)
 			return
@@ -394,29 +403,20 @@ func (m *MacInputInjector) askAccessibility() {
 		log.Warn("Accessibility permission not granted; approve the prompt to allow remote input")
 		return
 	}
-
-	now := time.Now()
-	if now.UnixNano() < m.axNextCheck.Load() {
-		return
-	}
-	m.axNextCheck.Store(now.Add(axRecheckEvery).UnixNano())
-
-	// The grant can arrive while the session is running, in which case there is
-	// nothing left to do.
-	if axIsProcessTrusted != nil && axIsProcessTrusted() {
-		m.axDone.Store(true)
-		return
-	}
-	if now.Sub(time.Unix(0, m.axAskedAt.Load())) < axEscalateAfter {
-		return
-	}
-	// The dialog has been up long enough to count as unanswered, or macOS never
-	// showed it because a decision already exists. Either way it will not appear
-	// again in this process, so point at Settings once and stop nagging.
 	openPrivacyPane("Privacy_Accessibility")
 	log.Warn("Accessibility permission still not granted. Opened System Settings > " +
 		"Privacy & Security > Accessibility; enable netbird there.")
 	m.axDone.Store(true)
+}
+
+// axProcessTrusted reads the Accessibility state without prompting. A host whose
+// symbols failed to load counts as trusted: nothing can be asked or checked
+// there, and the alternative is warning on every event forever.
+func axProcessTrusted() bool {
+	if axIsProcessTrusted == nil {
+		return true
+	}
+	return axIsProcessTrusted()
 }
 
 // axProcessIsTrusted asks macOS whether netbird has Accessibility access,
