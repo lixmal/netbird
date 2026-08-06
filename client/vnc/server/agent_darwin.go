@@ -21,22 +21,30 @@ import (
 	"github.com/netbirdio/netbird/client/configs"
 )
 
-// darwinAgentManager spawns a per-user VNC agent on demand and keeps it
-// alive across multiple client connections within the same console-user
-// session. A new agent is spawned the first time a client connects, or
-// whenever the console user changes underneath us.
+// darwinAgentManager spawns a per-user VNC agent on demand and keeps it alive
+// only while connections are using it. Concurrent connections share one agent;
+// the last one to finish takes it down again.
 //
-// Lifecycle is lazy by design: a daemon that never receives a VNC
-// connection never spawns anything. The trade-off versus an eager spawn
-// (the Windows model) is that the first VNC client pays the launchctl
+// The agent is deliberately not reused across connections. TCC decides per
+// process: a permission prompt appears at most once in the lifetime of a
+// process, a grant made afterwards may not reach it, and a permission the user
+// takes away stays available to a process that already holds it. A long-lived
+// agent therefore silently serves stale grants and can never ask again, which
+// leaves the user with no way back other than restarting the service. A fresh
+// process per connection reads the current state and can ask for what it needs.
+//
+// Lifecycle is lazy by design: a daemon that never receives a VNC connection
+// never spawns anything. The cost is that every connection pays the launchctl
 // asuser + listen-readiness wait, ~hundreds of milliseconds in practice.
-// That cost only repeats on user switch.
 type darwinAgentManager struct {
 	mu         sync.Mutex
 	authToken  string
 	socketPath string
 	uid        uint32
 	running    bool
+	// users counts the connections that resolved this agent and have not
+	// released it yet.
+	users int
 }
 
 func newDarwinAgentManager(ctx context.Context) *darwinAgentManager {
@@ -101,8 +109,12 @@ func (m *darwinAgentManager) Resolve(ctx context.Context) (string, string, uint3
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.running && m.uid == consoleUID && vncAgentRunning() {
+		m.users++
 		return m.socketPath, m.authToken, m.uid, nil
 	}
+	// Connections already holding this agent still owe a Release, so their claims
+	// carry over to the replacement rather than being dropped.
+	claims := m.users
 	m.killLocked()
 	// Reap stray agents so the new token is the only accepted one.
 	killAllVNCAgents()
@@ -131,8 +143,25 @@ func (m *darwinAgentManager) Resolve(ctx context.Context) (string, string, uint3
 	m.socketPath = socketPath
 	m.uid = consoleUID
 	m.running = true
+	m.users = claims + 1
 	log.Infof("spawned VNC agent for console uid=%d on %s", consoleUID, socketPath)
 	return socketPath, token, consoleUID, nil
+}
+
+// Release drops one connection's claim on the agent and stops it once none are
+// left, so the next connection starts a process that sees the permissions as
+// they are then rather than as they were when the first one connected.
+func (m *darwinAgentManager) Release() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.users > 0 {
+		m.users--
+	}
+	if m.users > 0 || !m.running {
+		return
+	}
+	m.killLocked()
+	log.Info("last VNC connection closed; agent stopped, a fresh one starts on the next connection")
 }
 
 // prepareAgentSocketDir creates a per-uid subdirectory under the netbird
