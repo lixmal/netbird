@@ -166,6 +166,39 @@ func RequestScreenRecording() bool {
 	return granted
 }
 
+// screenRecording caches the preflight read. The call is a lookup in tccd, and
+// the callers are on paths that run per input event.
+var screenRecording struct {
+	mu      sync.Mutex
+	granted bool
+	readAt  time.Time
+}
+
+// screenRecordingRecheck paces the preflight reads. A grant takes effect at once,
+// so this is also how long a session shows no windows after being granted.
+const screenRecordingRecheck = time.Second
+
+// screenRecordingGranted reports whether Screen Recording is granted right now,
+// without prompting. Unlike its reputation on Sequoia, the preflight call agrees
+// with the request in the agent, in all three of granted, revoked and undecided;
+// it is the daemon, where a user-scope request is dropped, that it cannot answer
+// for. Verified on macOS 15 against the TCC rows.
+func screenRecordingGranted() bool {
+	if cgPreflightScreenCaptureAccess == nil {
+		// Nothing to read. Callers use this to hold something back, so the
+		// permissive answer is the one that does not wedge them.
+		return true
+	}
+	screenRecording.mu.Lock()
+	defer screenRecording.mu.Unlock()
+	if time.Since(screenRecording.readAt) < screenRecordingRecheck {
+		return screenRecording.granted
+	}
+	screenRecording.granted = cgPreflightScreenCaptureAccess()
+	screenRecording.readAt = time.Now()
+	return screenRecording.granted
+}
+
 // NewCGCapturer creates a screen capturer for the main display.
 func NewCGCapturer() (*CGCapturer, error) {
 	initDarwinCapture()
