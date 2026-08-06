@@ -10,9 +10,15 @@ builds:
     env: [CGO_ENABLED=0]
     goos:
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
+    ignore:
+      # Windows on arm64 has no signed installer in the sign pipeline, and the
+      # 32-bit targets upstream ignores are not built here at all.
+      - goos: windows
+        goarch: arm64
     ldflags:
       - -s -w -X github.com/netbirdio/netbird/version.version={{.Version}} -X main.commit={{.Commit}} -X main.date={{.CommitDate}} -X main.builtBy=goreleaser
     mod_timestamp: "{{ .CommitTimestamp }}"
