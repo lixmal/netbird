@@ -5,7 +5,6 @@ package server
 import (
 	"fmt"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -336,8 +335,7 @@ type MacInputInjector struct {
 	axDone atomic.Bool
 	// axNextTry is when the cold path may run again. Input arrives continuously,
 	// so it is paced by time rather than by event count.
-	axNextTry    atomic.Int64
-	axWaitLogged atomic.Bool
+	axNextTry atomic.Int64
 	// modifiers is the CGEventFlags state the remote client has built up with
 	// its modifier key events, stamped onto everything posted afterwards.
 	modifiers atomic.Uint64
@@ -353,8 +351,7 @@ func NewMacInputInjector() (*MacInputInjector, error) {
 	if postEventAllowed() {
 		m.axDone.Store(true)
 	} else {
-		log.Infof("input permission not granted yet, asking when input arrives (post-event %s, accessibility trusted=%v)",
-			postEventState(), axProcessTrusted())
+		log.Info("input permission not granted yet, asking when input arrives")
 	}
 
 	if path, err := exec.LookPath("pbcopy"); err == nil {
@@ -383,14 +380,17 @@ func (m *MacInputInjector) ensureAccessibility() {
 	m.askAccessibility()
 }
 
-// axAskPacing keeps the cold path off the hot path while it waits for the Screen
-// Recording question to be settled.
+// axAskPacing keeps the cold path off the hot path.
 const axAskPacing = 2 * time.Second
 
 // postEventAllowed reports whether injected events are allowed to land, reading
 // kTCCServicePostEvent without prompting. This is the decision CGEventPost is
-// judged by; a host too old for the call falls back to the Accessibility trust
-// read, which is the closest thing available there.
+// judged by.
+//
+// The fallback is for hosts predating the call, where Accessibility was the gate.
+// It is deliberately not used anywhere else: AXIsProcessTrusted has the side
+// effect of filing the caller in the Accessibility list with the box unchecked,
+// and a decision on file, even that one, stops macOS from ever showing the dialog.
 func postEventAllowed() bool {
 	if cgPreflightPostEventAccess == nil {
 		return axProcessTrusted()
@@ -398,48 +398,31 @@ func postEventAllowed() bool {
 	return cgPreflightPostEventAccess()
 }
 
-// postEventState renders the post-event read for a log line, keeping "no such
-// call on this host" distinct from a plain no.
-func postEventState() string {
-	if cgPreflightPostEventAccess == nil {
-		return "preflight=unavailable"
+// axProcessTrusted reads the Accessibility state without prompting, and registers
+// the caller in the Accessibility list as a side effect. A host whose symbols
+// failed to load counts as trusted: nothing can be asked or checked there.
+func axProcessTrusted() bool {
+	if axIsProcessTrusted == nil {
+		return true
 	}
-	return "preflight=" + strconv.FormatBool(cgPreflightPostEventAccess())
+	return axIsProcessTrusted()
 }
 
 // askAccessibility is the cold path of ensureAccessibility. It asks once and then
 // goes quiet for the rest of the process.
 //
-// Asking is the whole of what we can do here. AXIsProcessTrusted is only
-// trustworthy before the first prompt: afterwards the process keeps the answer it
-// was given, and the check still reports untrusted seconds after the user grants,
-// while the events being injected already land. So there is no outcome to observe,
-// nothing to usefully retry, and no reason to escalate to System Settings. The
-// next connection gets a process that reads the state fresh.
-//
-// The ask waits for Screen Recording, which can be read honestly. macOS shows one
-// permission dialog at a time and Screen Recording is asked for first, so asking
-// while that dialog is up loses this one with no trace.
+// One ask is all there is. TCC answers a request at most once in the lifetime of a
+// process, and the reads do not follow along either: both the post-event and the
+// screen-capture preflight keep reporting the state the process started with, so a
+// grant made during a session is invisible to it. Nothing here can observe an
+// outcome, which leaves nothing to retry and no basis for escalating to System
+// Settings. The next connection runs a fresh agent that reads the state anew.
 func (m *MacInputInjector) askAccessibility() {
 	now := time.Now()
 	if now.UnixNano() < m.axNextTry.Load() {
 		return
 	}
 	m.axNextTry.Store(now.Add(axAskPacing).UnixNano())
-
-	if postEventAllowed() {
-		log.Info("input permission is granted")
-		m.axDone.Store(true)
-		return
-	}
-	if !screenRecordingGranted() {
-		// One dialog at a time: see the doc comment. Logged once so a session
-		// that never asks is distinguishable from one that asked in vain.
-		if m.axWaitLogged.CompareAndSwap(false, true) {
-			log.Info("input needs permission, waiting for the Screen Recording question to be answered first")
-		}
-		return
-	}
 	m.axDone.Store(true)
 
 	// CGRequestPostEventAccess raises the Accessibility dialog for the service
@@ -461,16 +444,6 @@ func (m *MacInputInjector) askAccessibility() {
 		return
 	}
 	log.Warn("asked for input permission; granting it makes remote input work right away")
-}
-
-// axProcessTrusted reads the Accessibility state without prompting. A host whose
-// symbols failed to load counts as trusted: nothing can be asked or checked
-// there, and the alternative is warning on every event forever.
-func axProcessTrusted() bool {
-	if axIsProcessTrusted == nil {
-		return true
-	}
-	return axIsProcessTrusted()
 }
 
 // axProcessIsTrusted asks macOS whether netbird has Accessibility access,
